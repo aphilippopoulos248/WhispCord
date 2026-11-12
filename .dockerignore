@@ -1,3 +1,9 @@
 .git
 target
 .env*
+node_modules
+**/node_modules
+apps/web/.next
+**/dist
+.env
+**/.env

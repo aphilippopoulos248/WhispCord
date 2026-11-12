@@ -1,0 +1,53 @@
+# Whispcord backend: orchestrator + discord-mcp fork on one private network.
+# Only the orchestrator publishes a port. discord-mcp is never reachable from outside.
+#
+#   cp infra/.env.example infra/.env   # fill in secrets
+#   docker compose -f infra/docker-compose.yml --env-file infra/.env up --build
+services:
+  discord-mcp:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: http
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      # Deliberately unset: every call carries an explicit guildId injected by the orchestrator.
+      DISCORD_GUILD_ID: ""
+      WHISPCORD_MCP_SECRET: ${WHISPCORD_MCP_SECRET}
+      WHISPCORD_EVENTS_WEBHOOK_URL: http://orchestrator:8787/internal/discord-events
+    expose:
+      - "8085"
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8085/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: apps/orchestrator/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      discord-mcp:
+        condition: service_healthy
+    environment:
+      PORT: 8787
+      WEB_ORIGIN: ${WEB_ORIGIN}
+      DISCORD_MCP_URL: http://discord-mcp:8085/mcp
+      WHISPCORD_MCP_SECRET: ${WHISPCORD_MCP_SECRET}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_BOT_REDIRECT_URI: ${DISCORD_BOT_REDIRECT_URI}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      WHISPCORD_PLANNER_MODEL: ${WHISPCORD_PLANNER_MODEL:-claude-sonnet-5-5}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+    ports:
+      - "8787:8787"
+    networks: [internal]
+
+networks:
+  internal:

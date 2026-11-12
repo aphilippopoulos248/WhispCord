@@ -54,7 +54,7 @@ public class CategoryService {
             throw new IllegalArgumentException("Discord server not found by guildId");
         }
         Category category = guild.createCategory(name).complete();
-        return "Created new category: " + category.getName();
+        return "Created new category: " + category.getName() + " (ID: " + category.getId() + ")";
     }
 
     /**

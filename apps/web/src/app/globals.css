@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0f1115;
+  --color-panel: #171a21;
+  --color-panel-2: #1f232c;
+  --color-line: #2a2f3a;
+  --color-muted: #8b93a7;
+  --color-text: #e7e9ee;
+  --color-accent: #8b7cf6;
+  --color-accent-strong: #7262f0;
+  --color-ok: #3ccf91;
+  --color-warn: #f2b44c;
+  --color-danger: #f0616d;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body {
+  background: var(--color-ink);
+  color: var(--color-text);
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+}
+@utility btn-primary {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 bg-accent text-white hover:bg-accent-strong;
+}
+@utility btn-ghost {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 border border-line text-text hover:bg-panel-2;
+}
+@utility btn-danger {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 bg-danger text-white hover:opacity-90;
+}
+@utility card {
+  @apply rounded-xl border border-line bg-panel;
+}
+@utility input {
+  @apply w-full rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm text-text placeholder:text-muted focus:border-accent focus:outline-none;
+}

@@ -1,0 +1,26 @@
+{
+  "name": "whispcord",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Manage your Discord server in plain English. Web app + orchestrator wrapping a fork of SaseQ/discord-mcp.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:web": "npm run dev -w @whispcord/web",
+    "dev:orchestrator": "npm run dev -w @whispcord/orchestrator",
+    "cli": "npm run cli -w @whispcord/orchestrator --",
+    "build": "npm run build -w @whispcord/orchestrator && npm run build -w @whispcord/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "demo:web": "npm run demo -w @whispcord/web"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "22.20.5"
+  }
+}
