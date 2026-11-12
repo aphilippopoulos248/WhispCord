@@ -48,7 +48,14 @@ function safeEqual(a: string, b: string) {
 export async function buildApp(deps: AppDeps) {
   const { config, store, internal, runs, events } = deps;
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
-  await app.register(cors, { origin: [config.WEB_ORIGIN], credentials: false });
+  await app.register(cors, {
+    origin: [config.WEB_ORIGIN],
+    credentials: false,
+    // @fastify/cors only allows GET, HEAD and POST unless told otherwise; settings use PATCH and
+    // account deletion uses DELETE, which browsers would otherwise block ("Failed to fetch").
+    methods: ["GET", "HEAD", "POST", "PATCH", "DELETE"],
+    allowedHeaders: ["Authorization", "Content-Type"],
+  });
 
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HttpError) return reply.status(err.status).send({ error: err.message });

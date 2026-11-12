@@ -51,6 +51,27 @@ describe("auth", () => {
   });
 });
 
+describe("CORS (what browsers check before PATCH/DELETE)", () => {
+  it("lets the web app use every method the API exposes, and nobody else", async () => {
+    const { app } = await setup();
+    for (const method of ["GET", "POST", "PATCH", "DELETE"]) {
+      const res = await app.inject({
+        method: "OPTIONS",
+        url: `/servers/${GUILD}/settings`,
+        headers: { origin: "http://localhost:3000", "access-control-request-method": method, "access-control-request-headers": "authorization,content-type" },
+      });
+      expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:3000");
+      expect(String(res.headers["access-control-allow-methods"])).toContain(method);
+    }
+    const evil = await app.inject({
+      method: "OPTIONS",
+      url: `/servers/${GUILD}/settings`,
+      headers: { origin: "https://evil.example", "access-control-request-method": "PATCH" },
+    });
+    expect(evil.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+});
+
 describe("connect flow", () => {
   let ctx: Ctx;
   beforeEach(async () => {
