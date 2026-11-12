@@ -310,6 +310,15 @@ export class GuildGateway {
       case "channel":
         if (s.channels.some((c) => c.id === value) || this.isCreated("channel", value) || this.isCreated("category", value)) return;
         return fail();
+      case "channelList": {
+        const ids = value.split(",").map((v) => v.trim()).filter(Boolean);
+        for (const id of ids) {
+          if (!(s.channels.some((c) => c.id === id) || this.isCreated("channel", id))) {
+            throw new GatewayError(`${arg} includes ${id}, which is not a channel in this server.`, "foreign_id");
+          }
+        }
+        return;
+      }
       case "category":
         if (s.channels.some((c) => c.id === value && c.type === "CATEGORY") || this.isCreated("category", value)) return;
         return fail();

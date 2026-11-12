@@ -2,11 +2,14 @@
  * Tool allowlist. Every discord-mcp tool Whispcord may use is listed here with its tier.
  * Anything NOT listed is blocked by default, so new upstream tools never appear silently.
  */
-export const TIERS = ["read", "build", "destructive", "moderate", "messaging", "restricted"] as const;
+export const TIERS = ["read", "build", "destructive", "moderate", "messaging", "message_search", "restricted"] as const;
 export type Tier = (typeof TIERS)[number];
 
-/** Tiers a server owner may toggle. `restricted` (DMs, user lookups) is never user-enabled. */
-export const USER_TOGGLEABLE_TIERS: Tier[] = ["build", "destructive", "moderate", "messaging"];
+/**
+ * Tiers a server owner may toggle. `restricted` (DMs, user lookups) is never user-enabled.
+ * `message_search` sends message text to Anthropic for classification, so it is off by default.
+ */
+export const USER_TOGGLEABLE_TIERS: Tier[] = ["build", "destructive", "moderate", "messaging", "message_search"];
 export const DEFAULT_ENABLED_TIERS: Tier[] = ["read", "build", "destructive"];
 
 /**
@@ -15,6 +18,7 @@ export const DEFAULT_ENABLED_TIERS: Tier[] = ["read", "build", "destructive"];
  */
 export type RefKind =
   | "channel" // any guild channel, incl. categories
+  | "channelList" // comma-separated channel IDs; each must be a channel in this guild
   | "category"
   | "role"
   | "member"
@@ -36,6 +40,11 @@ export interface ToolSpec {
   inverse?: (createdId: string) => { tool: string; args: Record<string, string> };
   /** Tool used to snapshot before-state for edits (args are derived from the edit's args). */
   snapshotWith?: { tool: string; pick: string[] };
+  /**
+   * False for tools only the orchestrator calls on Claude's behalf (e.g. scan_messages, used by
+   * find_messages). They never appear in the action catalog and can't be plan steps.
+   */
+  plannable?: boolean;
   /** UI grouping. */
   group: "server" | "category" | "channel" | "role" | "permission" | "webhook" | "event" | "invite" | "emoji" | "message" | "member" | "moderation";
 }
@@ -149,6 +158,11 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   delete_guild_scheduled_event: { tier: "destructive", group: "event", refs: { eventId: "event" } },
   delete_invite: { tier: "destructive", group: "invite", refs: { inviteCode: "invite" } },
   delete_emoji: { tier: "destructive", group: "emoji", refs: { emojiId: "emoji" } },
+  // Deleted messages are gone for good, so they need the same typed confirmation as other deletions.
+  delete_message: { tier: "destructive", group: "message", refs: { channelId: "channel", messageId: "message" } },
+
+  // ---- message search (opt-in; message text goes to a tool-less classifier, never the planner) ----
+  scan_messages: { tier: "message_search", group: "message", refs: { channelIds: "channelList" }, plannable: false },
 
   // ---- moderate (opt-in) ----
   assign_role: { tier: "moderate", group: "member", refs: { userId: "member", roleId: "role" } },
@@ -169,7 +183,6 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   // ---- messaging (opt-in) ----
   send_message: { tier: "messaging", group: "message", refs: { channelId: "channel" } },
   edit_message: { tier: "messaging", group: "message", refs: { channelId: "channel", messageId: "message" } },
-  delete_message: { tier: "messaging", group: "message", refs: { channelId: "channel", messageId: "message" } },
   read_messages: { tier: "messaging", group: "message", refs: { channelId: "channel" } },
   add_reaction: { tier: "messaging", group: "message", refs: { channelId: "channel", messageId: "message" } },
   remove_reaction: { tier: "messaging", group: "message", refs: { channelId: "channel", messageId: "message" } },
@@ -194,6 +207,12 @@ export function isToolAllowed(name: string, enabledTiers: readonly Tier[]): bool
   const spec = toolSpec(name);
   if (!spec || spec.tier === "restricted") return false;
   return spec.tier === "read" || enabledTiers.includes(spec.tier);
+}
+
+/** Can this tool appear as a step in a plan (and in Claude's action catalog)? */
+export function isPlannable(name: string): boolean {
+  const spec = toolSpec(name);
+  return spec !== undefined && spec.tier !== "read" && spec.plannable !== false;
 }
 
 export const isDestructive = (name: string) => toolSpec(name)?.tier === "destructive";

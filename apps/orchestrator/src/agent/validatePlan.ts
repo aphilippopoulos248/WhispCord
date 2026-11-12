@@ -1,6 +1,7 @@
 import {
   PlanSchema,
   findPlaceholders,
+  isPlannable,
   toolSpec,
   type Plan,
   type ValidatedPlan,
@@ -58,6 +59,10 @@ export async function validatePlan(
         else if (!target.creates) problems.push(`${where}: step ${ref} does not create anything, so {{${ref}.id}} has no value`);
         dependsOn.add(ref);
       }
+    }
+    if (spec && spec.tier !== "read" && !isPlannable(step.tool)) {
+      problems.push(`${where}: this tool can't be a plan step`);
+      continue;
     }
     try {
       await gateway.validate(step.tool, step.args, { planning: true });

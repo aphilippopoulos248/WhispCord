@@ -87,6 +87,9 @@ export class Maintenance {
     const before = new Date(Date.now() - this.config.DISCONNECTED_RETENTION_DAYS * 24 * 60 * 60 * 1000);
     const servers = await this.store.purgeDisconnectedServers(before);
     const attempts = await this.store.purgeExpiredConnectAttempts();
+    const findingsBefore = new Date(Date.now() - this.config.FINDINGS_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const findings = await this.store.clearMessageSearchBefore(findingsBefore);
+    if (findings) this.log.info(`Cleared message-search results from ${findings} run(s) older than ${this.config.FINDINGS_RETENTION_DAYS} days`);
     if (servers) this.log.info(`Purged ${servers} server(s) disconnected for over ${this.config.DISCONNECTED_RETENTION_DAYS} days`);
     return { servers, attempts };
   }

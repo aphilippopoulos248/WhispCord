@@ -1,6 +1,8 @@
 import type {
   ActionStatus,
   CreatedObjectType,
+  MessageFinding,
+  MessageSearchStats,
   RunStatus,
   Tier,
   ValidatedPlan,
@@ -46,6 +48,13 @@ export interface ConnectAttempt {
 
 export type RunKind = "prompt" | "undo" | "fix";
 
+/** Results of every find_messages call in a run. Contains message excerpts; never sent to Claude. */
+export interface RunMessageSearch {
+  findings: MessageFinding[];
+  searches: Array<MessageSearchStats & { criteria: string }>;
+  classifierTokens: { input: number; output: number };
+}
+
 export interface Run {
   id: string;
   serverId: string;
@@ -59,6 +68,9 @@ export interface Run {
   conversation: unknown[] | null;
   pendingQuestion: { toolUseId: string | null; question: string; partialResults: unknown[] } | null;
   approvedStepIds: string[] | null;
+  /** Set when the run ended by answering instead of planning (report_findings). */
+  report: string | null;
+  messageSearch: RunMessageSearch | null;
   error: string | null;
   model: string | null;
   inputTokens: number;
@@ -130,6 +142,8 @@ export interface Store {
   /** Deletes servers disconnected before `before`, with their runs and actions. Returns how many. */
   purgeDisconnectedServers(before: Date): Promise<number>;
   purgeExpiredConnectAttempts(): Promise<number>;
+  /** Clears message-search results (they contain message excerpts) from runs created before `before`. */
+  clearMessageSearchBefore(before: Date): Promise<number>;
   /**
    * Deletes everything tied to a user: their runs, the servers they connected (with those
    * servers' history), memberships, usage and the profile/auth account itself.

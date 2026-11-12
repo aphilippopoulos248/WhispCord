@@ -5,7 +5,7 @@ $envFile = Join-Path $root ".env"
 if (-not (Test-Path $envFile)) { Write-Error "Missing $envFile"; exit 1 }
 
 # Only pass discord-mcp its own settings, not the Anthropic or Supabase keys in the same file.
-$allowed = @("SPRING_PROFILES_ACTIVE", "DISCORD_TOKEN", "DISCORD_GUILD_ID", "WHISPCORD_MCP_SECRET", "WHISPCORD_EVENTS_WEBHOOK_URL")
+$allowed = @("SPRING_PROFILES_ACTIVE", "DISCORD_TOKEN", "DISCORD_GUILD_ID", "WHISPCORD_MCP_SECRET", "WHISPCORD_EVENTS_WEBHOOK_URL", "WHISPCORD_MESSAGE_CONTENT")
 foreach ($line in Get-Content $envFile) {
     if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$' -and $allowed -contains $Matches[1]) {
         [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim(), "Process")

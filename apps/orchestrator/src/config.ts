@@ -19,6 +19,11 @@ const EnvSchema = z.object({
   /** The build plan specifies Sonnet for planning. */
   WHISPCORD_PLANNER_MODEL: z.string().default("claude-sonnet-5-5"),
   WHISPCORD_PLANNER_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("medium"),
+  /** Message search classifier (the build plan specifies Haiku for cheap classification). */
+  WHISPCORD_CLASSIFIER_MODEL: z.string().default("claude-haiku-5-5"),
+  MAX_MESSAGES_SCANNED_PER_RUN: z.coerce.number().default(1000),
+  /** Message excerpts found by searches are cleared from run history after this many days. */
+  FINDINGS_RETENTION_DAYS: z.coerce.number().default(30),
 
   SUPABASE_URL: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),

@@ -1,6 +1,6 @@
 "use client";
 
-import type { RunEvent, RunStatus, ValidatedPlan, ValidatedStep } from "@whispcord/shared";
+import type { MessageFinding, MessageSearchStats, RunEvent, RunStatus, ValidatedPlan, ValidatedStep } from "@whispcord/shared";
 import { demoRuns, demoSnapshot } from "./demoData";
 
 /**
@@ -17,6 +17,8 @@ interface DemoRun {
   pendingQuestion: { question: string } | null;
   approvedStepIds: string[] | null;
   error: string | null;
+  report?: string | null;
+  messageSearch?: { findings: MessageFinding[]; searches: Array<MessageSearchStats & { criteria: string }> } | null;
   guildId: string;
   parentRunId: string | null;
 }
@@ -114,6 +116,28 @@ async function plan(run: DemoRun) {
     emit({ type: "log", runId: run.id, message: msg });
   }
   await wait(900);
+  // Prompts about messages show message search (sample data).
+  if (/message/i.test(run.prompt) && run.kind === "prompt") {
+    emit({ type: "log", runId: run.id, message: "Searching messages" });
+    await wait(1200);
+    const ch = demoSnapshot(run.guildId);
+    const general = ch.channels.find((c) => c.name === "general")!;
+    const memes = ch.channels.find((c) => c.name === "memes")!;
+    const base = `https://discord.com/channels/${run.guildId}`;
+    const ago = (h: number) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+    run.messageSearch = {
+      findings: [
+        { ref: "f1", messageId: "970000000000000001", channelId: general.id, channelName: "general", authorId: "400000000000000101", authorName: "edgelord42", createdAt: ago(5), severity: "high", reason: "Slur targeting a group of people", excerpt: "(sample message hidden in demo mode)", jumpUrl: `${base}/${general.id}/970000000000000001` },
+        { ref: "f2", messageId: "970000000000000002", channelId: memes.id, channelName: "memes", authorId: "400000000000000102", authorName: "anon_raider", createdAt: ago(30), severity: "medium", reason: "Insults another member repeatedly", excerpt: "(sample message hidden in demo mode)", jumpUrl: `${base}/${memes.id}/970000000000000002` },
+        { ref: "f3", messageId: "970000000000000003", channelId: general.id, channelName: "general", authorId: "400000000000000103", authorName: "casualgamer", createdAt: ago(70), severity: "low", reason: "Mildly demeaning joke", excerpt: "(sample message hidden in demo mode)", jumpUrl: `${base}/${general.id}/970000000000000003` },
+      ],
+      searches: [{ criteria: run.prompt, scanned: 412, classified: 398, channels: 4, skippedChannels: [], unclassifiedBatches: 0, truncated: false, contentAvailable: true }],
+    };
+    run.report = "I checked 412 recent messages across 4 channels and found 3 that look hateful or harassing: one high-severity slur from edgelord42 in #general, repeated insults from anon_raider in #memes, and a mildly demeaning joke. Nothing was changed; ask me if you want them deleted or the authors timed out.";
+    emit({ type: "report", runId: run.id, summary: run.report, findings: run.messageSearch.findings });
+    setStatus(run, "done");
+    return;
+  }
   // Very short prompts get a clarifying question, to show that flow.
   if (run.prompt.trim().split(/\s+/).length < 4 && !run.pendingQuestion && run.kind === "prompt") {
     run.pendingQuestion = { question: "Do you want this as a new category, or added to the existing Community category?" };

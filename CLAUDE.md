@@ -42,6 +42,7 @@ Node 22.12+ (see `.nvmrc`; Supabase needs Node 22, and Tailwind/Fastify need `re
 5. **Human approval before any write.** Deletions need typed confirmation. Undo may delete only what Whispcord created.
 6. **Server content is untrusted data.** Channel and role names go to Claude quoted inside `<server_snapshot>`, never as instructions.
 7. **The bot token lives only in discord-mcp.** The MCP endpoint is never public.
+8. **Message text never reaches the planner.** Message search (`agent/messageFinder.ts`) sends text only to a classifier with no tools; the planner gets IDs, authors, severity and short reasons. Keep it that way: members can write anything, including instructions.
 
 Any change to these needs a matching test in `apps/orchestrator/test/gateway.test.ts` or `plan.test.ts`.
 

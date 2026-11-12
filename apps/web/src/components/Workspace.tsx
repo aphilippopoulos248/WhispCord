@@ -31,6 +31,7 @@ const CHIPS = [
   "Set up a gaming community with general, clips and LFG channels and a voice lounge",
   "Add a staff-only area that only Moderators can see",
   "Create roles for Valorant, Minecraft and Fortnite players with matching colours",
+  "Find hateful or harassing messages from the last 7 days",
 ];
 
 type Tab = "workspace" | "history" | "settings";
@@ -266,6 +267,10 @@ const TIER_LABELS: Record<string, [string, string]> = {
   destructive: ["Deletions", "Allow plans that delete things. Each one still needs you to type DELETE."],
   moderate: ["Moderation", "Assign roles, nicknames, timeouts, kicks and bans. Requires the Builder + Moderation bot permissions."],
   messaging: ["Messaging", "Send, edit and react to messages in channels."],
+  message_search: [
+    "Message search",
+    "Find messages that match a description, like “hateful messages this week”. Recent message text is sent to Anthropic (Claude) to check it; matches are kept in run history for 30 days. Needs Discord’s Message Content intent.",
+  ],
 };
 
 function Settings({ server, isOwner }: { server: ServerInfo; isOwner: boolean }) {

@@ -1,12 +1,13 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CreatedObjectType, RunStatus, ValidatedPlan } from "@whispcord/shared";
 import { executePlan } from "../agent/executor.js";
+import { findMessages, summarizeForPlanner } from "../agent/messageFinder.js";
 import { answerConversation, initialConversation, runPlanner, type PlannerResult } from "../agent/planner.js";
 import { validatePlan } from "../agent/validatePlan.js";
 import type { Config } from "../config.js";
 import { GuildGateway, type GatewayLimits } from "../gateway/gateway.js";
 import type { DiscordMcp, WhispcordInternal } from "../mcp/client.js";
-import type { Profile, Run, Server, Store } from "../store/types.js";
+import type { Profile, Run, RunMessageSearch, Server, Store } from "../store/types.js";
 import type { RunEvents } from "./events.js";
 
 export class HttpError extends Error {
@@ -134,6 +135,7 @@ export class RunService {
       release = this.lock(server.guildId);
       await this.setStatus(run, "planning");
       const gateway = gw ?? (await this.buildGateway(server, profile));
+      const search = this.messageSearchFor(run, gateway);
       const result: PlannerResult = await runPlanner(
         {
           anthropic: this.d.anthropic!,
@@ -143,6 +145,7 @@ export class RunService {
           limits: this.limits,
           confirmationPhrase: CONFIRMATION_PHRASE,
           onLog: (message) => this.d.events.emit({ type: "log", runId: run.id, message }),
+          findMessages: search?.find,
         },
         conversation,
       );
@@ -161,6 +164,11 @@ export class RunService {
         await this.d.store.updateRun(run.id, { plan: o.plan, conversation: result.conversation, ...tokens });
         this.d.events.emit({ type: "plan", runId: run.id, plan: o.plan });
         await this.setStatus(run, "awaiting_approval");
+      } else if (o.kind === "report") {
+        const messageSearch = search?.state() ?? fresh?.messageSearch ?? null;
+        await this.d.store.updateRun(run.id, { report: o.summary, messageSearch, conversation: result.conversation, ...tokens });
+        this.d.events.emit({ type: "report", runId: run.id, summary: o.summary, findings: messageSearch?.findings ?? [] });
+        await this.setStatus(run, "done");
       } else if (o.kind === "question") {
         await this.d.store.updateRun(run.id, {
           conversation: result.conversation,
@@ -179,6 +187,33 @@ export class RunService {
     } finally {
       release?.();
     }
+  }
+
+  /**
+   * Message search for one planning pass, if the server enabled it. Results accumulate on the run
+   * (refs f1, f2, ... stay unique across searches) and are saved as they arrive.
+   */
+  private messageSearchFor(run: Run, gateway: GuildGateway) {
+    if (!this.d.anthropic || !gateway.allowedToolNames().includes("scan_messages")) return null;
+    const state: RunMessageSearch = run.messageSearch
+      ? structuredClone(run.messageSearch)
+      : { findings: [], searches: [], classifierTokens: { input: 0, output: 0 } };
+    const budget = { remaining: this.d.config.MAX_MESSAGES_SCANNED_PER_RUN - state.searches.reduce((n, s) => n + s.scanned, 0) };
+    const find = async (input: unknown) => {
+      const result = await findMessages({ gateway, anthropic: this.d.anthropic!, model: this.d.config.WHISPCORD_CLASSIFIER_MODEL, budget }, input);
+      const known = new Set(state.findings.map((f) => f.messageId));
+      const fresh = result.findings.filter((f) => !known.has(f.messageId));
+      const renumbered = fresh.map((f, i) => ({ ...f, ref: `f${state.findings.length + i + 1}` }));
+      state.findings.push(...renumbered);
+      state.searches.push({ ...result.stats, criteria: (input as { criteria?: string }).criteria ?? "" });
+      state.classifierTokens.input += result.usage.inputTokens;
+      state.classifierTokens.output += result.usage.outputTokens;
+      await this.d.store.updateRun(run.id, { messageSearch: state });
+      await this.d.store.recordUsage(run.profileId, { tokens: result.usage.inputTokens + result.usage.outputTokens });
+      this.d.events.emit({ type: "log", runId: run.id, message: `Checked ${result.stats.scanned} messages, ${renumbered.length} match(es)` });
+      return summarizeForPlanner({ ...result, findings: renumbered });
+    };
+    return { find, state: () => state };
   }
 
   async approve(run: Run, server: Server, profile: Profile, stepIds: string[], confirmation?: string): Promise<void> {

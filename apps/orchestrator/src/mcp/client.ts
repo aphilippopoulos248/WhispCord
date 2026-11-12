@@ -62,8 +62,10 @@ export class McpDiscordClient implements DiscordMcp {
     const transport = new StreamableHTTPClientTransport(new URL(this.url), { requestInit: { headers } });
     const client = new Client({ name: "whispcord-orchestrator", version: "0.1.0" });
     transport.onclose = () => {
-      // Force a reconnect on next use if discord-mcp restarts.
+      // Force a reconnect on next use if discord-mcp restarts, and re-read its tools then
+      // (a restarted fork may have new ones, like scan_messages).
       this.client = null;
+      this.tools = null;
     };
     await client.connect(transport);
     this.client = client;
@@ -94,6 +96,7 @@ export class McpDiscordClient implements DiscordMcp {
     } catch (err) {
       // One retry on a dropped session.
       this.client = null;
+      this.tools = null;
       client = await this.connect();
       res = await client.callTool({ name, arguments: args });
     }

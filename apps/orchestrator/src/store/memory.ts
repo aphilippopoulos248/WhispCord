@@ -77,7 +77,7 @@ export class MemoryStore implements Store {
     const run: Run = {
       id: randomUUID(), serverId: input.serverId, profileId: input.profileId, kind: input.kind,
       parentRunId: input.parentRunId ?? null, prompt: input.prompt, status: "planning", plan: null,
-      conversation: null, pendingQuestion: null, approvedStepIds: null, error: null, model: input.model,
+      conversation: null, pendingQuestion: null, approvedStepIds: null, report: null, messageSearch: null, error: null, model: input.model,
       inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, createdAt: new Date().toISOString(),
     };
     this.runs.set(run.id, run);
@@ -134,6 +134,16 @@ export class MemoryStore implements Store {
       if (s.status === "disconnected" && s.statusChangedAt && new Date(s.statusChangedAt) < before) {
         this.deleteServer(s.id);
         this.servers.delete(guildId);
+        n++;
+      }
+    }
+    return n;
+  }
+  async clearMessageSearchBefore(before: Date) {
+    let n = 0;
+    for (const r of this.runs.values()) {
+      if (r.messageSearch && new Date(r.createdAt) < before) {
+        r.messageSearch = null;
         n++;
       }
     }

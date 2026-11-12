@@ -16,6 +16,8 @@ services:
       DISCORD_GUILD_ID: ""
       WHISPCORD_MCP_SECRET: ${WHISPCORD_MCP_SECRET}
       WHISPCORD_EVENTS_WEBHOOK_URL: http://orchestrator:8787/internal/discord-events
+      # Only true after enabling Message Content Intent in the Developer Portal.
+      WHISPCORD_MESSAGE_CONTENT: ${WHISPCORD_MESSAGE_CONTENT:-false}
     expose:
       - "8085"
     networks: [internal]

@@ -4,8 +4,11 @@ import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.ScheduledEvent;
+import net.dv8tion.jda.api.entities.channel.middleman.GuildMessageChannel;
+import net.dv8tion.jda.api.requests.GatewayIntent;
 import net.dv8tion.jda.api.entities.emoji.RichCustomEmoji;
 import net.dv8tion.jda.api.entities.channel.attribute.ICategorizableChannel;
 import net.dv8tion.jda.api.entities.channel.attribute.IPositionableChannel;
@@ -16,7 +19,9 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Service;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.concurrent.TimeUnit;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -162,6 +167,125 @@ public class WhispcordService {
         out.put("permissions", Long.toString(Permission.getRaw(perms)));
         out.put("missingPermissions", missing);
         out.put("isAdministrator", perms.contains(Permission.ADMINISTRATOR));
+        return Json.write(out);
+    }
+
+    static final int SCAN_MAX_PER_CHANNEL = 500;
+    static final int SCAN_MAX_TOTAL = 2000;
+    static final int SCAN_MAX_HOURS = 24 * 90;
+
+    private static int clamp(String raw, int dflt, int min, int max) {
+        if (raw == null || raw.isBlank()) return dflt;
+        try {
+            return Math.max(min, Math.min(max, Integer.parseInt(raw.trim())));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Expected a number, got: " + raw);
+        }
+    }
+
+    /**
+     * Recent messages from a guild's text channels, as JSON, for Whispcord's message search.
+     * Bounded (per channel, total and by age) so one request can't pull a server's whole history.
+     * The orchestrator only exposes this when the server owner enabled "Message search", and it
+     * sends the text to a tool-less classifier, never to the planner.
+     *
+     * Message text is only returned by Discord when the app has the Message Content intent;
+     * without it `content` is empty and `contentAvailable` is false.
+     */
+    @Tool(name = "scan_messages",
+            description = "Whispcord internal: returns recent messages from text channels as JSON")
+    public String scanMessages(
+            @ToolParam(description = "Discord server ID") String guildId,
+            @ToolParam(description = "Comma-separated channel IDs; empty means every text channel the bot can read", required = false) String channelIds,
+            @ToolParam(description = "Max messages per channel (1-500, default 100)", required = false) String limitPerChannel,
+            @ToolParam(description = "Only messages from the last N hours (1-2160, default 168)", required = false) String sinceHours,
+            @ToolParam(description = "Max messages in total (1-2000, default 1000)", required = false) String maxTotal) {
+        Guild guild = requireGuild(guildId);
+        Member self = guild.getSelfMember();
+        int perChannel = clamp(limitPerChannel, 100, 1, SCAN_MAX_PER_CHANNEL);
+        int total = clamp(maxTotal, 1000, 1, SCAN_MAX_TOTAL);
+        int hours = clamp(sinceHours, 168, 1, SCAN_MAX_HOURS);
+        OffsetDateTime cutoff = OffsetDateTime.now().minusHours(hours);
+
+        List<GuildMessageChannel> channels = new ArrayList<>();
+        List<Map<String, Object>> skipped = new ArrayList<>();
+        if (channelIds != null && !channelIds.isBlank()) {
+            for (String raw : channelIds.split(",")) {
+                String id = raw.trim();
+                if (id.isEmpty()) continue;
+                GuildChannel ch = guild.getGuildChannelById(id);
+                if (ch instanceof GuildMessageChannel gmc) {
+                    channels.add(gmc);
+                } else {
+                    skipped.add(Map.of("id", id, "reason", ch == null ? "not found in this server" : "not a text channel"));
+                }
+            }
+        } else {
+            channels.addAll(guild.getTextChannels());
+            channels.addAll(guild.getNewsChannels());
+        }
+
+        List<Map<String, Object>> messages = new ArrayList<>();
+        List<String> scanned = new ArrayList<>();
+        boolean truncated = false;
+        int withContent = 0;
+        int othersChecked = 0;
+        for (GuildMessageChannel channel : channels) {
+            if (!self.hasPermission(channel, Permission.VIEW_CHANNEL, Permission.MESSAGE_HISTORY)) {
+                skipped.add(Map.of("id", channel.getId(), "name", channel.getName(), "reason", "bot can't read this channel"));
+                continue;
+            }
+            int remaining = total - messages.size();
+            if (remaining <= 0) {
+                truncated = true;
+                break;
+            }
+            List<Message> batch;
+            try {
+                batch = channel.getIterableHistory().cache(false)
+                        .takeUntilAsync(Math.min(perChannel, remaining), m -> m.getTimeCreated().isBefore(cutoff))
+                        .get(60, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                skipped.add(Map.of("id", channel.getId(), "name", channel.getName(), "reason", "could not read: " + e.getClass().getSimpleName()));
+                continue;
+            }
+            scanned.add(channel.getId());
+            for (Message m : batch) {
+                // Skip the bot's own messages: never what an admin is searching for.
+                if (m.getAuthor().getIdLong() == self.getIdLong()) continue;
+                String content = m.getContentRaw();
+                // Discord shows a bot messages that mention it even without the Message Content
+                // intent, so those can't tell us whether text is visible in general.
+                boolean mentionsBot = m.getMentions().isMentioned(self);
+                if (!mentionsBot) {
+                    othersChecked++;
+                    if (!content.isEmpty()) withContent++;
+                }
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("id", m.getId());
+                out.put("channelId", channel.getId());
+                out.put("channelName", channel.getName());
+                out.put("authorId", m.getAuthor().getId());
+                out.put("authorName", m.getMember() != null ? m.getMember().getEffectiveName() : m.getAuthor().getName());
+                out.put("authorIsBot", m.getAuthor().isBot());
+                out.put("createdAt", m.getTimeCreated().toString());
+                out.put("content", content);
+                out.put("attachments", m.getAttachments().size());
+                out.put("jumpUrl", m.getJumpUrl());
+                messages.add(out);
+            }
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("guildId", guild.getId());
+        out.put("sinceHours", hours);
+        out.put("scannedChannels", scanned);
+        out.put("skippedChannels", skipped);
+        out.put("truncated", truncated);
+        out.put("messageContentIntent", jda.getGatewayIntents().contains(GatewayIntent.MESSAGE_CONTENT));
+        // Without the intent Discord sends other people's messages with empty content.
+        out.put("contentAvailable", othersChecked == 0 || withContent > 0);
+        out.put("messages", messages);
         return Json.write(out);
     }
 

@@ -36,6 +36,8 @@ const toRun = (r: Row): Run => ({
   conversation: r.conversation_json,
   pendingQuestion: r.pending_question_json,
   approvedStepIds: r.approved_step_ids,
+  report: r.report ?? null,
+  messageSearch: r.message_search_json ?? null,
   error: r.error,
   model: r.model,
   inputTokens: r.input_tokens,
@@ -48,7 +50,7 @@ const toRun = (r: Row): Run => ({
 const runPatchToRow = (p: Partial<Run>): Row => {
   const map: Record<string, string> = {
     kind: "kind", parentRunId: "parent_run_id", prompt: "prompt", status: "status", plan: "plan_json",
-    conversation: "conversation_json", pendingQuestion: "pending_question_json", approvedStepIds: "approved_step_ids",
+    conversation: "conversation_json", pendingQuestion: "pending_question_json", approvedStepIds: "approved_step_ids", report: "report", messageSearch: "message_search_json",
     error: "error", model: "model", inputTokens: "input_tokens", outputTokens: "output_tokens",
     cacheReadTokens: "cache_read_tokens", cacheWriteTokens: "cache_write_tokens",
   };
@@ -246,6 +248,15 @@ export class SupabaseStore implements Store {
     const rows = check(
       await this.db.from("servers").delete()
         .eq("status", "disconnected").lt("status_changed_at", before.toISOString())
+        .select("id"),
+    );
+    return rows?.length ?? 0;
+  }
+
+  async clearMessageSearchBefore(before: Date) {
+    const rows = check(
+      await this.db.from("runs").update({ message_search_json: null })
+        .lt("created_at", before.toISOString()).not("message_search_json", "is", null)
         .select("id"),
     );
     return rows?.length ?? 0;

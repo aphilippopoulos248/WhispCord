@@ -53,11 +53,39 @@ export interface ValidatedPlan {
   warnings: string[];
 }
 
+/** One message the classifier matched against the administrator's criteria. */
+export interface MessageFinding {
+  /** Short handle Claude uses to refer to it (f1, f2, ...). */
+  ref: string;
+  messageId: string;
+  channelId: string;
+  channelName: string;
+  authorId: string;
+  authorName: string;
+  createdAt: string;
+  severity: "low" | "medium" | "high";
+  reason: string;
+  /** Start of the message text, for the administrator only (never sent to the planner). */
+  excerpt: string;
+  jumpUrl: string;
+}
+
+export interface MessageSearchStats {
+  scanned: number;
+  classified: number;
+  channels: number;
+  skippedChannels: Array<{ id: string; name?: string; reason: string }>;
+  unclassifiedBatches: number;
+  truncated: boolean;
+  contentAvailable: boolean;
+}
+
 /** Events streamed to the browser over SSE. */
 export type RunEvent =
   | { type: "status"; runId: string; status: RunStatus; message?: string }
   | { type: "plan"; runId: string; plan: ValidatedPlan }
   | { type: "question"; runId: string; question: string }
+  | { type: "report"; runId: string; summary: string; findings: MessageFinding[] }
   | { type: "step"; runId: string; stepId: string; status: ActionStatus; result?: string; error?: string; durationMs?: number }
   | { type: "log"; runId: string; message: string }
   | { type: "done"; runId: string; status: RunStatus };

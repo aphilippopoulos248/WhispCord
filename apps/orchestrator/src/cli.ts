@@ -9,7 +9,9 @@ import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
 import { DEFAULT_ENABLED_TIERS, type Tier } from "@whispcord/shared";
+import type { MessageFinding } from "@whispcord/shared";
 import { executePlan } from "./agent/executor.js";
+import { findMessages, summarizeForPlanner } from "./agent/messageFinder.js";
 import { answerConversation, initialConversation, runPlanner } from "./agent/planner.js";
 import { loadConfig } from "./config.js";
 import { GuildGateway } from "./gateway/gateway.js";
@@ -79,9 +81,29 @@ if ((bot.rolesAboveBot ?? 0) > 0) console.log(`⚠ ${bot.rolesAboveBot} role(s) 
 
 const planningGateway = makeGateway();
 let conversation = initialConversation(planningGateway, prompt);
+
+// Message search (only with --tiers including message_search). Findings print with excerpts.
+const allFindings: MessageFinding[] = [];
+const searchBudget = { remaining: config.MAX_MESSAGES_SCANNED_PER_RUN };
+const findMessagesForCli = planningGateway.allowedToolNames().includes("scan_messages")
+  ? async (input: unknown) => {
+      const result = await findMessages({ gateway: planningGateway, anthropic, model: config.WHISPCORD_CLASSIFIER_MODEL, budget: searchBudget }, input);
+      const renumbered = result.findings.map((f, i) => ({ ...f, ref: `f${allFindings.length + i + 1}` }));
+      allFindings.push(...renumbered);
+      const st = result.stats;
+      console.log(
+        `  … checked ${st.scanned} messages in ${st.channels} channel(s): ${renumbered.length} match(es)` +
+          `${st.contentAvailable ? "" : " (message text hidden: Message Content intent is off)"}` +
+          ` [classifier tokens ${result.usage.inputTokens} in / ${result.usage.outputTokens} out]`,
+      );
+      return summarizeForPlanner({ ...result, findings: renumbered });
+    }
+  : undefined;
+
 const deps = {
   anthropic, model: config.WHISPCORD_PLANNER_MODEL, effort: config.WHISPCORD_PLANNER_EFFORT,
   gateway: planningGateway, limits, confirmationPhrase: CONFIRMATION_PHRASE, onLog: (m: string) => console.log(`  … ${m}`),
+  findMessages: findMessagesForCli,
 };
 
 for (;;) {
@@ -98,6 +120,19 @@ for (;;) {
     const answer = await ask(`\n? ${o.question}\n> `);
     conversation = answerConversation(result.conversation, answer, o.toolUseId, o.partialResults);
     continue;
+  }
+
+  if (allFindings.length) {
+    console.log("\nMatches:");
+    for (const f of allFindings) {
+      console.log(`  ${f.ref} [${f.severity}] #${f.channelName} · ${f.authorName} · ${f.createdAt.slice(0, 16).replace("T", " ")}`);
+      console.log(`      ${f.reason}`);
+      console.log(`      "${f.excerpt.replace(/\s+/g, " ").slice(0, 160)}"  ${f.jumpUrl}`);
+    }
+  }
+  if (o.kind === "report") {
+    console.log(`\n${o.summary}\n\nNothing was changed.`);
+    process.exit(0);
   }
 
   const plan = o.plan;

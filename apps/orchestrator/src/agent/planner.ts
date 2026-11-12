@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { renderSnapshotForModel, toolSpec, type ValidatedPlan } from "@whispcord/shared";
+import { isPlannable, renderSnapshotForModel, toolSpec, type ValidatedPlan } from "@whispcord/shared";
 import type { GatewayLimits, GuildGateway } from "../gateway/gateway.js";
 import { GatewayError } from "../gateway/gateway.js";
 import { PlanValidationError, validatePlan } from "./validatePlan.js";
@@ -14,6 +14,12 @@ How this works:
 - You may call the read-only tools to look things up. You cannot change anything directly.
 - When you know what to do, call propose_plan with the minimal ordered list of steps. The administrator reviews the plan and decides whether it runs.
 - If the request is ambiguous in a way that changes the outcome (for example, which existing channel they mean, or who should see a private area), call ask_clarification with one short question instead of guessing.
+- If the administrator only wants information (a question, or "find" / "show me" something), answer with report_findings instead of proposing a plan.
+
+Finding messages (only when the find_messages tool is available):
+- Use find_messages to look for messages matching a description, such as hateful, spam or off-topic messages. Pass the criteria in the administrator's words, and channelIds or sinceHours if they named channels or a time range.
+- It returns matches with IDs, authors, a severity and a short reason; you never see the message text, and you don't need it.
+- Then call report_findings with a short summary. Only propose actions on the matches (such as delete_message with channelId and messageId, or timing out a member) if the administrator asked for that.
 
 Writing steps:
 - Each step has an id (s1, s2, ...), a tool name from <available_actions>, args using that tool's argument names, a short reason, and a risk level.
@@ -52,6 +58,33 @@ const PROPOSE_PLAN: Anthropic.Beta.Messages.BetaTool = {
   },
 };
 
+export const FIND_MESSAGES: Anthropic.Beta.Messages.BetaTool = {
+  name: "find_messages",
+  description:
+    "Search recent messages in this server for ones matching a description (e.g. hateful, harassment, spam, self-promotion). A separate reviewer reads the messages; you get back matches with message/channel/author IDs, severity and a short reason, never the message text.",
+  input_schema: {
+    type: "object",
+    properties: {
+      criteria: { type: "string", description: "What to look for, in plain words, e.g. 'hateful or harassing messages'." },
+      channelIds: { type: "array", items: { type: "string" }, description: "Channels to search. Omit to search every text channel the bot can read." },
+      sinceHours: { type: "integer", description: "Only messages from the last N hours (default 168 = 7 days, max 2160)." },
+      maxMessages: { type: "integer", description: "Most messages to check (default 500)." },
+    },
+    required: ["criteria"],
+  },
+};
+
+const REPORT_FINDINGS: Anthropic.Beta.Messages.BetaTool = {
+  name: "report_findings",
+  description:
+    "Finish by answering the administrator without changing anything: a short summary of what you found. Matches from find_messages are shown to them automatically with links.",
+  input_schema: {
+    type: "object",
+    properties: { summary: { type: "string", description: "A few sentences for the administrator." } },
+    required: ["summary"],
+  },
+};
+
 const ASK_CLARIFICATION: Anthropic.Beta.Messages.BetaTool = {
   name: "ask_clarification",
   description: "Ask the administrator one short question when the request is ambiguous. Their answer comes back as this tool's result.",
@@ -65,6 +98,7 @@ const ASK_CLARIFICATION: Anthropic.Beta.Messages.BetaTool = {
 export type PlannerOutcome =
   | { kind: "plan"; plan: ValidatedPlan }
   | { kind: "question"; question: string; toolUseId: string | null; partialResults: ToolResult[] }
+  | { kind: "report"; summary: string }
   | { kind: "failed"; error: string };
 
 export interface PlannerResult {
@@ -81,6 +115,11 @@ export interface PlannerDeps {
   limits: GatewayLimits;
   confirmationPhrase: string;
   onLog?: (message: string) => void;
+  /**
+   * Message search, present only when the server enabled it. Returns the text the planner sees
+   * (IDs and reasons only; see messageFinder.summarizeForPlanner).
+   */
+  findMessages?: (input: unknown) => Promise<string>;
 }
 
 const MAX_TURNS = 16;
@@ -95,7 +134,7 @@ export function renderActionCatalog(gateway: GuildGateway): string {
   const lines: string[] = [];
   for (const tool of gateway.claudeTools()) {
     const spec = toolSpec(tool.name);
-    if (!spec || spec.tier === "read") continue;
+    if (!spec || !isPlannable(tool.name)) continue;
     const schema = tool.input_schema as { properties?: Record<string, { description?: string }>; required?: string[] };
     const required = new Set(schema.required ?? []);
     lines.push(`- ${tool.name} [${spec.tier}]: ${tool.description}`);
@@ -191,7 +230,13 @@ export async function runPlanner(deps: PlannerDeps, conversation: MessageParam[]
   const messages = [...conversation];
   const usage = emptyUsage();
   // Sorted and stable, so the tools + system prefix is byte-identical across turns and runs.
-  const tools = [...gateway.claudeTools(["read"]), PROPOSE_PLAN, ASK_CLARIFICATION];
+  const tools = [
+    ...gateway.claudeTools(["read"]),
+    ...(deps.findMessages ? [FIND_MESSAGES] : []),
+    PROPOSE_PLAN,
+    REPORT_FINDINGS,
+    ASK_CLARIFICATION,
+  ];
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const response = await anthropic.beta.messages.create(buildPlannerRequest(deps, tools, messages));
@@ -239,6 +284,21 @@ export async function runPlanner(deps: PlannerDeps, conversation: MessageParam[]
           const first = err instanceof PlanValidationError ? err.problems[0] : (err as Error).message;
           deps.onLog?.(`Plan needed fixes (${first}); asking Claude to revise it.`);
           results.push({ type: "tool_result", tool_use_id: use.id, content: msg, is_error: true });
+        }
+      } else if (use.name === "report_findings") {
+        finished = { kind: "report", summary: String(input.summary ?? "").trim() || "Done." };
+        results.push({ type: "tool_result", tool_use_id: use.id, content: "Shown to the administrator." });
+      } else if (use.name === "find_messages") {
+        if (!deps.findMessages) {
+          results.push({ type: "tool_result", tool_use_id: use.id, content: "Message search is turned off for this server.", is_error: true });
+        } else {
+          deps.onLog?.("Searching messages");
+          try {
+            results.push({ type: "tool_result", tool_use_id: use.id, content: await deps.findMessages(input) });
+          } catch (err) {
+            const msg = err instanceof GatewayError ? err.message : `Message search failed: ${(err as Error).message}`;
+            results.push({ type: "tool_result", tool_use_id: use.id, content: msg, is_error: true });
+          }
         }
       } else if (use.name === "ask_clarification") {
         pendingQuestion = { id: use.id, question: String(input.question ?? "").trim() };
