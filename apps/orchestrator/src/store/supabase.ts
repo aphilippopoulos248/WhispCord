@@ -40,6 +40,8 @@ const toRun = (r: Row): Run => ({
   model: r.model,
   inputTokens: r.input_tokens,
   outputTokens: r.output_tokens,
+  cacheReadTokens: r.cache_read_tokens ?? 0,
+  cacheWriteTokens: r.cache_write_tokens ?? 0,
   createdAt: r.created_at,
 });
 
@@ -48,6 +50,7 @@ const runPatchToRow = (p: Partial<Run>): Row => {
     kind: "kind", parentRunId: "parent_run_id", prompt: "prompt", status: "status", plan: "plan_json",
     conversation: "conversation_json", pendingQuestion: "pending_question_json", approvedStepIds: "approved_step_ids",
     error: "error", model: "model", inputTokens: "input_tokens", outputTokens: "output_tokens",
+    cacheReadTokens: "cache_read_tokens", cacheWriteTokens: "cache_write_tokens",
   };
   const row: Row = {};
   for (const [k, v] of Object.entries(p)) if (map[k]) row[map[k]] = v;

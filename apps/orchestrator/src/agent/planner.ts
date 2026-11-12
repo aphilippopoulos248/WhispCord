@@ -70,7 +70,7 @@ export type PlannerOutcome =
 export interface PlannerResult {
   outcome: PlannerOutcome;
   conversation: MessageParam[];
-  usage: { inputTokens: number; outputTokens: number };
+  usage: PlannerUsage;
 }
 
 export interface PlannerDeps {
@@ -138,6 +138,49 @@ export function answerConversation(
   return [...conversation, { role: "user", content: answer }];
 }
 
+export interface PlannerUsage {
+  /** Uncached input tokens (the API's input_tokens excludes cache reads and writes). */
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+const emptyUsage = (): PlannerUsage => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+
+function addUsage(total: PlannerUsage, u: Anthropic.Beta.Messages.BetaUsage) {
+  total.inputTokens += u.input_tokens;
+  total.outputTokens += u.output_tokens;
+  total.cacheReadTokens += u.cache_read_input_tokens ?? 0;
+  total.cacheWriteTokens += u.cache_creation_input_tokens ?? 0;
+}
+
+/**
+ * Prompt caching, two breakpoints:
+ * - explicit on the system prompt: caches tools + system, which are identical for every run on
+ *   servers with the same enabled tiers, so new runs read them from cache;
+ * - automatic (top-level) on the conversation: moves forward each turn, so the action catalog,
+ *   snapshot and earlier turns are read from cache on every later turn of the same run.
+ */
+export function buildPlannerRequest(
+  deps: Pick<PlannerDeps, "model" | "effort">,
+  tools: Anthropic.Beta.Messages.BetaTool[],
+  messages: MessageParam[],
+): Anthropic.Beta.Messages.MessageCreateParamsNonStreaming {
+  return {
+    model: deps.model,
+    max_tokens: 16000,
+    system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+    tools,
+    messages,
+    cache_control: { type: "ephemeral" },
+    output_config: { effort: deps.effort },
+    // Server-side refusal fallback: on a policy decline the API re-runs on a fallback model.
+    betas: ["server-side-fallback-2026-07-01"],
+    fallbacks: "default",
+  };
+}
+
 /**
  * Runs the planning loop: Claude may call read tools (through the gateway), then must either
  * propose a plan or ask a question. Plans are validated server-side; invalid plans are sent
@@ -146,23 +189,13 @@ export function answerConversation(
 export async function runPlanner(deps: PlannerDeps, conversation: MessageParam[]): Promise<PlannerResult> {
   const { anthropic, gateway } = deps;
   const messages = [...conversation];
-  const usage = { inputTokens: 0, outputTokens: 0 };
+  const usage = emptyUsage();
+  // Sorted and stable, so the tools + system prefix is byte-identical across turns and runs.
   const tools = [...gateway.claudeTools(["read"]), PROPOSE_PLAN, ASK_CLARIFICATION];
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const response = await anthropic.beta.messages.create({
-      model: deps.model,
-      max_tokens: 16000,
-      system: SYSTEM_PROMPT,
-      tools,
-      messages,
-      output_config: { effort: deps.effort },
-      // Server-side refusal fallback: on a policy decline the API re-runs on a fallback model.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-    });
-    usage.inputTokens += response.usage.input_tokens;
-    usage.outputTokens += response.usage.output_tokens;
+    const response = await anthropic.beta.messages.create(buildPlannerRequest(deps, tools, messages));
+    addUsage(usage, response.usage);
 
     if (response.stop_reason === "refusal") {
       return { outcome: { kind: "failed", error: "Claude declined this request." }, conversation: messages, usage };

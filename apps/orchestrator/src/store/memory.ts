@@ -78,7 +78,7 @@ export class MemoryStore implements Store {
       id: randomUUID(), serverId: input.serverId, profileId: input.profileId, kind: input.kind,
       parentRunId: input.parentRunId ?? null, prompt: input.prompt, status: "planning", plan: null,
       conversation: null, pendingQuestion: null, approvedStepIds: null, error: null, model: input.model,
-      inputTokens: 0, outputTokens: 0, createdAt: new Date().toISOString(),
+      inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, createdAt: new Date().toISOString(),
     };
     this.runs.set(run.id, run);
     return run;

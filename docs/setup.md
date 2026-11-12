@@ -16,6 +16,8 @@
 
 ## 3. Run locally
 
+Requires **Node.js 22.12+** (`.nvmrc`). With nvm for Windows: `nvm install 22`, then `nvm use <version>`. The apps refuse to start on older versions.
+
 All local settings live in **one file: `.env` at the repo root** (template: `.env.example`).
 discord-mcp, the orchestrator and the web app all read it.
 

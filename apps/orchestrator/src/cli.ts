@@ -4,6 +4,7 @@
  *
  *   npm run cli -- --guild <serverId> --user <yourDiscordUserId> "Create a Gaming category with ..."
  */
+import "./nodeVersion.js";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
@@ -86,7 +87,8 @@ const deps = {
 for (;;) {
   console.log("\nPlanning…");
   const result = await runPlanner(deps, conversation);
-  console.log(`  (tokens: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out)`);
+  const u = result.usage;
+  console.log(`  (tokens: ${u.inputTokens} in, ${u.cacheReadTokens} cache read, ${u.cacheWriteTokens} cache write, ${u.outputTokens} out)`);
   const o = result.outcome;
   if (o.kind === "failed") {
     console.error(`\n✗ ${o.error}`);

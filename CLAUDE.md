@@ -31,7 +31,7 @@ npm run cli -- --guild <id> --user <discordUserId> [--dry-run] "prompt"   # M1 p
 mvn -o -q compile                    # Java fork (drop -o if dependencies aren't cached)
 ```
 
-Node 22+ (Supabase SDK requirement). Java 17+.
+Node 22.12+ (see `.nvmrc`; Supabase needs Node 22, and Tailwind/Fastify need `require()` of ES modules, on by default from 22.12). Java 17+. CI (`.github/workflows/ci.yml`) runs typecheck, tests and both builds; `docker-publish.yml` publishes to GHCR only after CI passes.
 
 ## Security rules (do not weaken)
 

@@ -1,3 +1,4 @@
+import "./nodeVersion.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildApp, supabaseTokenVerifier } from "./app.js";
 import { loadConfig } from "./config.js";

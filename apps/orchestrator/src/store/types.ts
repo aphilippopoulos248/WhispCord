@@ -63,6 +63,8 @@ export interface Run {
   model: string | null;
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
   createdAt: string;
 }
 

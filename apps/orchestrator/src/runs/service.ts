@@ -147,11 +147,15 @@ export class RunService {
         conversation,
       );
       const fresh = await this.d.store.getRun(run.id);
+      const u = result.usage;
       const tokens = {
-        inputTokens: (fresh?.inputTokens ?? 0) + result.usage.inputTokens,
-        outputTokens: (fresh?.outputTokens ?? 0) + result.usage.outputTokens,
+        inputTokens: (fresh?.inputTokens ?? 0) + u.inputTokens,
+        outputTokens: (fresh?.outputTokens ?? 0) + u.outputTokens,
+        cacheReadTokens: (fresh?.cacheReadTokens ?? 0) + u.cacheReadTokens,
+        cacheWriteTokens: (fresh?.cacheWriteTokens ?? 0) + u.cacheWriteTokens,
       };
-      await this.d.store.recordUsage(profile.id, { tokens: result.usage.inputTokens + result.usage.outputTokens });
+      // Usage counts every token processed; the per-run columns keep the cost breakdown.
+      await this.d.store.recordUsage(profile.id, { tokens: u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheWriteTokens });
       const o = result.outcome;
       if (o.kind === "plan") {
         await this.d.store.updateRun(run.id, { plan: o.plan, conversation: result.conversation, ...tokens });
