@@ -34,8 +34,9 @@ function LoginInner() {
 
   return (
     <div className="mx-auto max-w-sm px-4 py-24">
-      <div className="card p-6">
-        <h1 className="text-xl font-semibold">Sign in to Whispcord</h1>
+      <div className="chassis screws px-6 pb-6 pt-9">
+        <span className="label-caps">Sign in</span>
+        <h1 className="mt-1 text-2xl font-extrabold">Sign in to Whispcord</h1>
         <p className="mt-2 text-sm text-muted">
           We ask Discord for your username and the list of servers you’re in, so we can show the ones you manage.
         </p>

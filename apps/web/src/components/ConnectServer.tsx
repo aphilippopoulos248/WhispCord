@@ -34,27 +34,27 @@ export function ConnectServer({ manageable }: { manageable: Guild[] }) {
   }
 
   return (
-    <div className="mt-4 grid gap-4">
+    <div className="mt-2 grid gap-4">
       {manageable.length > 0 && (
-        <div className="card divide-y divide-line">
+        <ul className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">
           {manageable.map((g) => (
-            <div key={g.id} className="flex items-center gap-3 p-3">
+            <li key={g.id} className="empty-slot flex items-center gap-3 p-3">
               <ServerIcon name={g.name} icon={g.icon} size={32} />
-              <span className="flex-1 text-sm">{g.name}</span>
+              <span className="min-w-0 flex-1 truncate font-medium">{g.name}</span>
               <button className="btn-primary" disabled={busy} onClick={() => connect(g.id)}>
-                Add Whispcord
+                Connect
               </button>
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
 
-      <div className="card p-4">
-        <label htmlFor="guildId" className="text-sm font-medium">Or paste a server ID</label>
-        <div className="mt-2 flex gap-2">
+      <div className="well p-4">
+        <label htmlFor="guildId" className="label-caps">Or paste a server ID</label>
+        <div className="mt-2 flex flex-wrap gap-2 sm:flex-nowrap">
           <input
             id="guildId"
-            className="input"
+            className="input font-mono"
             inputMode="numeric"
             placeholder="e.g. 123456789012345678"
             value={guildId}

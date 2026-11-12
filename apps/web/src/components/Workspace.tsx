@@ -2,11 +2,12 @@
 
 import { USER_TOGGLEABLE_TIERS, type GuildSnapshot, type Tier } from "@whispcord/shared";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { RunThread } from "./RunThread";
 import { ServerIcon } from "./ServerIcon";
-import { StatusDot, StatusPill } from "./StatusPill";
+import { serverState, StatusPill } from "./StatusPill";
+import { DECK_TIERS, TierPips } from "./TierPips";
 
 export interface ServerInfo {
   id: string;
@@ -27,14 +28,15 @@ export interface RunSummary {
   parent_run_id: string | null;
 }
 
-const CHIPS = [
-  "Set up a gaming community with general, clips and LFG channels and a voice lounge",
-  "Add a staff-only area that only Moderators can see",
-  "Create roles for Valorant, Minecraft and Fortnite players with matching colours",
-  "Find hateful or harassing messages from the last 7 days",
+const PRESETS: Array<[label: string, prompt: string]> = [
+  ["Gaming setup", "Set up a gaming community with general, clips and LFG channels and a voice lounge"],
+  ["Staff area", "Add a staff-only area that only Moderators can see"],
+  ["Game roles", "Create roles for Valorant, Minecraft and Fortnite players with matching colours"],
+  ["Scan messages", "Find hateful or harassing messages from the last 7 days"],
 ];
 
 type Tab = "workspace" | "history" | "settings";
+const ACTIVE_STATUSES = ["planning", "needs_input", "awaiting_approval", "running"];
 
 export function Workspace(props: {
   server: ServerInfo;
@@ -47,14 +49,16 @@ export function Workspace(props: {
   const [tab, setTab] = useState<Tab>("workspace");
   const [prompt, setPrompt] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(
-    props.initialRuns.find((r) => ["planning", "needs_input", "awaiting_approval", "running"].includes(r.status))?.id ?? null,
+    props.initialRuns.find((r) => ACTIVE_STATUSES.includes(r.status))?.id ?? null,
   );
   const [runs, setRuns] = useState(props.initialRuns);
+  const [tiers, setTiers] = useState<Tier[]>(server.enabled_tiers);
   const [snapshot, setSnapshot] = useState<GuildSnapshot | null>(null);
   const [mirrorError, setMirrorError] = useState<string | null>(null);
   const [botRoleOk, setBotRoleOk] = useState(server.bot_role_ok);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const connected = server.status === "connected";
 
   const refreshMirror = useCallback(async () => {
     try {
@@ -106,35 +110,31 @@ export function Workspace(props: {
     setTab("workspace");
   };
 
-  return (
-    <div className="mx-auto flex max-w-7xl gap-6 px-4 py-6">
-      {/* Sidebar */}
-      <aside className="hidden w-56 shrink-0 md:block">
-        <div className="text-xs font-medium uppercase tracking-wide text-muted">Servers</div>
-        <ul className="mt-2 grid gap-1">
-          {props.servers.map((s) => (
-            <li key={s.id}>
-              <Link
-                href={`/servers/${s.guild_id}`}
-                className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-panel-2 ${s.id === server.id ? "bg-panel-2" : ""}`}
-              >
-                <StatusDot status={s.status} roleOk={s.bot_role_ok} />
-                <span className="truncate">{s.name}</span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-        <Link href="/servers" className="mt-3 block px-2 text-sm text-accent">+ Connect a server</Link>
-      </aside>
+  // The rack shows live tier changes for the current server.
+  const rackServers = props.servers.map((s) => (s.id === server.id ? { ...s, enabled_tiers: tiers, bot_role_ok: botRoleOk } : s));
 
-      <div className="min-w-0 flex-1">
+  return (
+    <div className="mx-auto grid max-w-7xl items-start gap-4 px-4 pb-16 md:grid-cols-[250px_minmax(0,1fr)]">
+      <ServerRack servers={rackServers} currentId={server.id} />
+
+      <section className="chassis screws grid min-w-0 gap-4 px-4 pb-5 pt-7 sm:px-5">
+        {/* Plate, status and mode keys */}
         <div className="flex flex-wrap items-center gap-3">
-          <ServerIcon name={server.name} icon={server.icon} />
-          <h1 className="text-xl font-semibold">{server.name}</h1>
+          <div className="plate flex min-w-0 items-center gap-3 py-2 pl-2 pr-4">
+            <ServerIcon name={server.name} icon={server.icon} size={38} />
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-extrabold tracking-tight">{server.name}</h1>
+              <div className="font-mono text-[10px] text-muted">
+                {server.guild_id}
+                {snapshot ? ` · ${snapshot.memberCount} members` : ""}
+              </div>
+            </div>
+          </div>
           <StatusPill status={server.status} roleOk={botRoleOk} />
-          <nav className="ml-auto flex gap-1 rounded-lg border border-line p-1 text-sm">
+          <nav className="flex w-full gap-1.5 rounded-xl border border-line bg-well p-1.5 sm:ml-auto sm:w-auto" aria-label="Panel">
             {(["workspace", "history", "settings"] as Tab[]).map((t) => (
-              <button key={t} onClick={() => setTab(t)} className={`rounded-md px-3 py-1 capitalize ${tab === t ? "bg-panel-2" : "text-muted"}`}>
+              <button key={t} className="mode-key flex-1 sm:flex-none" aria-pressed={tab === t} onClick={() => setTab(t)}>
+                <span className={`led led-sm ${tab === t ? "led-accent" : ""}`} aria-hidden />
                 {t}
               </button>
             ))}
@@ -142,83 +142,138 @@ export function Workspace(props: {
         </div>
 
         {props.justConnected && (
-          <div className="card mt-4 border-ok/40 p-4 text-sm">Whispcord is connected. Try a prompt below.</div>
+          <div className="strip strip-ok">
+            <span className="led led-ok" aria-hidden />
+            <p className="flex-1">Whispcord is connected. Try a prompt below.</p>
+          </div>
         )}
-        {!botRoleOk && server.status === "connected" && (
-          <div className="card mt-4 flex flex-wrap items-center gap-3 border-warn/40 p-4 text-sm">
-            <span className="flex-1">
+        {!botRoleOk && connected && (
+          <div className="strip strip-warn">
+            <span className="led led-warn" aria-hidden />
+            <p className="min-w-[200px] flex-1">
               Drag the <strong>Whispcord</strong> role near the top of your role list (Server Settings → Roles) so it can manage your other roles.
-            </span>
-            <button className="btn-ghost" onClick={checkBot}>Check again</button>
+            </p>
+            <button className="btn" onClick={checkBot}>Check again</button>
+          </div>
+        )}
+        {!connected && (
+          <div className="strip strip-danger">
+            <span className="led led-danger" aria-hidden />
+            <p className="min-w-[200px] flex-1">Whispcord is disconnected from this server. Nothing can be planned or run until you connect it again.</p>
+            <Link href="/servers" className="btn-primary">Reconnect</Link>
           </div>
         )}
 
         {tab === "workspace" && (
-          <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_320px]">
-            <div className="min-w-0">
-              <div className="card p-4">
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+            <div className="grid min-w-0 gap-4">
+              <div className="well grid gap-2.5 p-3 focus-within:border-[#2f5b49]">
+                <label htmlFor="prompt" className="label-caps text-[#4f8a70]">Command input</label>
                 <textarea
-                  className="input min-h-24 resize-y"
-                  placeholder="Describe what you want, e.g. “Create a Gaming category with general, clips and LFG text channels and a Squad voice channel.”"
+                  id="prompt"
+                  className="min-h-24 w-full resize-y bg-transparent font-mono text-[13.5px] leading-relaxed text-phosphor caret-phosphor outline-none placeholder:text-[#3f6a57]"
+                  placeholder={connected
+                    ? "Describe what you want, e.g. “Create a Gaming category with general, clips and LFG text channels and a Squad voice channel.”"
+                    : "Reconnect this server to send commands."}
                   value={prompt}
+                  disabled={!connected}
                   onChange={(e) => setPrompt(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && prompt.trim()) void startRun(prompt);
                   }}
                   maxLength={4000}
                 />
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {CHIPS.map((c) => (
-                    <button key={c} className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-text" onClick={() => setPrompt(c)}>
-                      {c.length > 48 ? c.slice(0, 46) + "…" : c}
+                <div className="flex flex-wrap items-center gap-2">
+                  {PRESETS.map(([label, text]) => (
+                    <button key={label} className="cartridge" title={text} disabled={!connected} onClick={() => setPrompt(text)}>
+                      {label}
                     </button>
                   ))}
-                  <button className="btn-primary ml-auto" disabled={busy || !prompt.trim() || server.status !== "connected"} onClick={() => startRun(prompt)}>
+                  <button
+                    className="btn-primary w-full sm:ml-auto sm:w-auto"
+                    disabled={busy || !prompt.trim() || !connected}
+                    onClick={() => startRun(prompt)}
+                  >
                     {busy ? "Starting…" : "Plan it"}
                   </button>
                 </div>
-                {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+                {error && <p className="text-sm text-danger">{error}</p>}
               </div>
 
               {activeRunId ? (
                 <RunThread key={activeRunId} runId={activeRunId} onChanged={onRunChanged} onOpenRun={openRun} />
               ) : (
-                <p className="mt-6 text-sm text-muted">Your plan will appear here. Nothing changes on your server until you click Run.</p>
+                <p className="px-1 text-sm text-muted">Your plan will appear here. Nothing changes on your server until you press RUN.</p>
               )}
             </div>
 
-            <ServerMirror snapshot={snapshot} error={mirrorError} onRefresh={refreshMirror} />
+            <ServerMirror snapshot={snapshot} error={mirrorError} onRefresh={refreshMirror} connected={connected} />
           </div>
         )}
 
-        {tab === "history" && (
-          <div className="card mt-6 divide-y divide-line">
-            {runs.length === 0 && <p className="p-4 text-sm text-muted">No runs yet.</p>}
-            {runs.map((r) => (
-              <button key={r.id} className="flex w-full items-center gap-3 p-3 text-left hover:bg-panel-2" onClick={() => openRun(r.id)}>
-                <span className="w-36 shrink-0 text-xs text-muted">{new Date(r.created_at).toLocaleString()}</span>
-                <span className="flex-1 truncate text-sm">{r.prompt}</span>
-                <span className="text-xs text-muted">{r.status.replace("_", " ")}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        {tab === "history" && <History runs={runs} serverName={server.name} onOpen={openRun} />}
 
-        {tab === "settings" && <Settings server={server} isOwner={props.isOwner} />}
-      </div>
+        {tab === "settings" && <Settings server={server} isOwner={props.isOwner} tiers={tiers} setTiers={setTiers} />}
+      </section>
     </div>
   );
 }
 
-function ServerMirror({ snapshot, error, onRefresh }: { snapshot: GuildSnapshot | null; error: string | null; onRefresh: () => void }) {
+/* ---------------- Server rack ---------------- */
+
+function ServerRack({ servers, currentId }: { servers: ServerInfo[]; currentId: string }) {
+  const online = servers.filter((s) => s.status === "connected").length;
   return (
-    <aside className="card h-fit p-4 text-sm">
-      <div className="flex items-center justify-between">
-        <h2 className="font-medium">Server structure</h2>
-        <button className="text-xs text-muted hover:text-text" onClick={onRefresh}>Refresh</button>
+    <aside className="chassis screws grid gap-2.5 px-3 pb-3 pt-7 md:sticky md:top-4" aria-label="Your servers">
+      <div className="flex items-baseline justify-between px-1">
+        <span className="label-caps">Server rack</span>
+        <span className="label-caps">{online}/{servers.length} online</span>
       </div>
-      {error && <p className="mt-3 text-danger">{error}</p>}
-      {!snapshot && !error && <p className="mt-3 text-muted">Loading…</p>}
+      <ul className="flex gap-2 overflow-x-auto pb-1 md:grid md:overflow-visible md:pb-0">
+        {servers.map((s) => {
+          const st = serverState(s.status, s.bot_role_ok);
+          return (
+            <li key={s.id} className="min-w-[210px] md:min-w-0">
+              <Link href={`/servers/${s.guild_id}`} className="rack-unit" aria-current={s.id === currentId ? "page" : undefined}>
+                <ServerIcon name={s.name} icon={s.icon} size={34} />
+                <span className="grid min-w-0 gap-0.5">
+                  <span className="truncate font-semibold">{s.name}</span>
+                  <span className={`font-mono text-[9.5px] tracking-[0.12em] ${st.tone}`}>{st.short}</span>
+                  <span className="mt-0.5"><TierPips tiers={s.enabled_tiers} /></span>
+                </span>
+                <span className={`led ${st.led}`} role="img" aria-label={st.label} />
+              </Link>
+            </li>
+          );
+        })}
+        <li className="min-w-[210px] md:min-w-0">
+          <Link href="/servers" className="empty-slot flex items-center justify-between gap-2 p-3 hover:border-accent">
+            <span className="label-caps">Empty slot</span>
+            <span className="font-mono text-[11px] font-bold tracking-[0.1em] text-accent-hi">+ CONNECT</span>
+          </Link>
+        </li>
+      </ul>
+    </aside>
+  );
+}
+
+/* ---------------- Server structure ---------------- */
+
+function ServerMirror({ snapshot, error, onRefresh, connected }: {
+  snapshot: GuildSnapshot | null; error: string | null; onRefresh: () => void; connected: boolean;
+}) {
+  return (
+    <aside className="well scanlines grid h-fit min-w-0 gap-3 p-3" aria-label="Server structure">
+      <div className="flex items-center justify-between">
+        <span className="label-caps">Server structure</span>
+        <button className="btn-ghost px-2 py-1 text-[10px]" onClick={onRefresh}>Refresh</button>
+      </div>
+      {error && <p className="text-sm text-danger">{error}</p>}
+      {!snapshot && !error && (
+        <p className="grid min-h-40 place-items-center rounded-lg font-mono text-xs tracking-[0.2em] text-dim">
+          {connected ? "LOADING…" : "NO SIGNAL"}
+        </p>
+      )}
       {snapshot && <MirrorBody s={snapshot} />}
     </aside>
   );
@@ -228,39 +283,108 @@ function MirrorBody({ s }: { s: GuildSnapshot }) {
   const byPos = <T extends { position: number }>(a: T, b: T) => a.position - b.position;
   const cats = s.channels.filter((c) => c.type === "CATEGORY").sort(byPos);
   const loose = s.channels.filter((c) => c.type !== "CATEGORY" && !c.parentId).sort(byPos);
-  const icon = (type: string) => (type === "VOICE" || type === "STAGE" ? "🔊" : type === "FORUM" ? "💬" : "#");
+  const roles = [...s.roles].filter((r) => !r.isEveryone).sort((a, b) => b.position - a.position);
+  const channelCount = s.channels.filter((c) => c.type !== "CATEGORY").length;
+  const glyph = (type: string) => (type === "VOICE" || type === "STAGE" ? "◉" : type === "FORUM" ? "≡" : "#");
+  const Channel = ({ c }: { c: GuildSnapshot["channels"][number] }) => (
+    <li className="flex items-center gap-1.5 rounded px-1.5 py-px text-[#c9cdd8]">
+      <span className="w-2.5 text-center text-dim" aria-hidden>{glyph(c.type)}</span>
+      <span className="truncate">{c.name}</span>
+    </li>
+  );
   return (
-    <div className="mt-3 grid gap-3">
-      <ul className="grid gap-0.5">
-        {loose.map((c) => (
-          <li key={c.id} className="text-muted"><span className="mr-1">{icon(c.type)}</span>{c.name}</li>
+    <div className="grid gap-3 font-mono text-xs">
+      <div className="grid grid-cols-3 gap-1.5">
+        {([[s.memberCount, "MEMBERS"], [channelCount, "CHANNELS"], [roles.length, "ROLES"]] as const).map(([n, label]) => (
+          <div key={label} className="grid rounded-lg border border-[#232833] bg-[#12151b] px-2 py-1.5">
+            <b className="text-base tabular-nums text-phosphor">{n}</b>
+            <span className="text-[9px] tracking-[0.12em] text-muted">{label}</span>
+          </div>
         ))}
+      </div>
+      <ul className="grid gap-px">
+        {loose.map((c) => <Channel key={c.id} c={c} />)}
         {cats.map((cat) => (
           <li key={cat.id} className="mt-2">
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted">📁 {cat.name}</div>
-            <ul className="mt-1 grid gap-0.5 pl-2">
-              {s.channels.filter((c) => c.parentId === cat.id).sort(byPos).map((c) => (
-                <li key={c.id} className="text-muted"><span className="mr-1">{icon(c.type)}</span>{c.name}</li>
-              ))}
+            <div className="text-[10.5px] tracking-[0.12em] text-muted uppercase">{cat.name}</div>
+            <ul className="mt-0.5 grid gap-px">
+              {s.channels.filter((c) => c.parentId === cat.id).sort(byPos).map((c) => <Channel key={c.id} c={c} />)}
             </ul>
           </li>
         ))}
       </ul>
-      <div>
-        <div className="text-xs font-semibold uppercase tracking-wide text-muted">Roles</div>
-        <ul className="mt-1 grid gap-0.5">
-          {[...s.roles].filter((r) => !r.isEveryone).sort((a, b) => b.position - a.position).map((r) => (
-            <li key={r.id} className="flex items-center gap-2">
-              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: r.color ? `#${r.color.toString(16).padStart(6, "0")}` : "#8b93a7" }} />
-              <span className={r.position >= s.botHighestRolePosition ? "text-muted" : ""}>{r.name}</span>
-              {r.managed && <span className="text-xs text-muted">bot</span>}
-            </li>
-          ))}
+      <div className="grid gap-1.5">
+        <span className="label-caps">Roles</span>
+        <ul className="flex flex-wrap gap-1.5">
+          {roles.map((r) => {
+            const color = r.color ? `#${r.color.toString(16).padStart(6, "0")}` : "#8b93a7";
+            const above = r.position >= s.botHighestRolePosition && !r.managed;
+            return (
+              <li
+                key={r.id}
+                className={`rounded-full border px-2 py-0.5 text-[10.5px] ${above ? "opacity-60" : ""}`}
+                style={{ color, borderColor: `${color}55` }}
+                title={above ? "At or above Whispcord's role, so Whispcord can't change it" : undefined}
+              >
+                @{r.name}{r.managed ? " · bot" : ""}{above ? " · locked" : ""}
+              </li>
+            );
+          })}
         </ul>
       </div>
     </div>
   );
 }
+
+/* ---------------- History: run recorder ---------------- */
+
+const RUN_LIGHT: Record<string, string> = {
+  done: "led-ok", failed: "led-danger", planning: "led-busy", needs_input: "led-busy", awaiting_approval: "led-busy", running: "led-busy",
+};
+
+function History({ runs, serverName, onOpen }: { runs: RunSummary[]; serverName: string; onOpen: (id: string) => void }) {
+  const done = runs.filter((r) => r.status === "done").length;
+  const failed = runs.filter((r) => r.status === "failed").length;
+  return (
+    <div className="well overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-dashed border-[#2b313d] px-4 py-2.5">
+        <span className="label-caps">Run recorder · {serverName}</span>
+        <span className="flex gap-4 font-mono text-[11px] text-muted">
+          <span><b className="text-text">{runs.length}</b> runs</span>
+          <span><b className="text-text">{done}</b> done</span>
+          <span><b className="text-text">{failed}</b> failed</span>
+        </span>
+      </div>
+      {runs.length === 0 && <p className="p-4 text-sm text-muted">No runs yet. Your first plan will be recorded here.</p>}
+      <ul>
+        {runs.map((r) => (
+          <li key={r.id} className="border-b border-[#191d24] last:border-b-0">
+            <button
+              className="grid w-full grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-[#12161c] sm:grid-cols-[120px_60px_minmax(0,1fr)_150px]"
+              onClick={() => onOpen(r.id)}
+            >
+              <span className="font-mono text-[11px] tabular-nums text-muted">
+                {new Date(r.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </span>
+              <span className={`hidden justify-self-start rounded border px-1.5 py-0.5 font-mono text-[9.5px] font-bold tracking-[0.12em] uppercase sm:inline ${
+                r.kind === "undo" ? "border-warn/40 text-warn" : r.kind === "fix" ? "border-phosphor/35 text-phosphor" : "border-accent/40 text-accent-hi"
+              }`}>
+                {r.kind === "prompt" ? "Plan" : r.kind}
+              </span>
+              <span className="col-span-2 row-start-2 min-w-0 truncate sm:col-span-1 sm:row-start-auto">{r.prompt}</span>
+              <span className="col-start-2 row-start-1 flex items-center gap-2 font-mono text-[10px] tracking-[0.1em] uppercase sm:col-start-auto sm:row-start-auto">
+                <span className={`led ${RUN_LIGHT[r.status] ?? ""}`} aria-hidden />
+                {r.status.replace("_", " ")}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/* ---------------- Settings deck ---------------- */
 
 const TIER_LABELS: Record<string, [string, string]> = {
   build: ["Build", "Create and edit channels, categories, roles, permissions, webhooks, events, invites and emojis."],
@@ -273,11 +397,29 @@ const TIER_LABELS: Record<string, [string, string]> = {
   ],
 };
 
-function Settings({ server, isOwner }: { server: ServerInfo; isOwner: boolean }) {
-  const [tiers, setTiers] = useState<Tier[]>(server.enabled_tiers);
+const MODULE_CAPTIONS: Record<string, string> = {
+  build: "Channels, roles, permissions, events",
+  destructive: "Each one needs typed DELETE",
+  moderate: "Roles, timeouts, kicks, bans",
+  messaging: "Send, edit, react",
+  message_search: "Checks message text with Claude",
+};
+
+function Settings({ server, isOwner, tiers, setTiers }: {
+  server: ServerInfo; isOwner: boolean; tiers: Tier[]; setTiers: (t: Tier[]) => void;
+}) {
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [needsUpgrade, setNeedsUpgrade] = useState(false);
+  const [coverOpen, setCoverOpen] = useState(false);
+  const coverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => { if (coverTimer.current) clearTimeout(coverTimer.current); }, []);
+
+  function closeCoverIn(ms: number) {
+    if (coverTimer.current) clearTimeout(coverTimer.current);
+    coverTimer.current = setTimeout(() => setCoverOpen(false), ms);
+  }
 
   async function save(next: Tier[]) {
     setTiers(next);
@@ -296,6 +438,12 @@ function Settings({ server, isOwner }: { server: ServerInfo; isOwner: boolean })
     }
   }
 
+  function flip(t: Tier) {
+    const on = !tiers.includes(t);
+    void save(on ? [...tiers, t] : tiers.filter((x) => x !== t));
+    if (t === "destructive") closeCoverIn(900);
+  }
+
   async function upgradePermissions() {
     try {
       const { authorizeUrl } = await api<{ authorizeUrl: string }>(`/servers/${server.guild_id}/permissions-upgrade`, { body: {} });
@@ -306,7 +454,6 @@ function Settings({ server, isOwner }: { server: ServerInfo; isOwner: boolean })
   }
 
   async function disconnect() {
-    if (!confirm("Disconnect this server from Whispcord? The bot stays in the server until you kick it.")) return;
     try {
       await api(`/servers/${server.guild_id}/disconnect`, { method: "POST", body: {} });
       window.location.href = "/servers";
@@ -315,43 +462,149 @@ function Settings({ server, isOwner }: { server: ServerInfo; isOwner: boolean })
     }
   }
 
+  const armed = DECK_TIERS.filter((d) => USER_TOGGLEABLE_TIERS.includes(d.tier) && tiers.includes(d.tier));
+
   return (
-    <div className="mt-6 grid max-w-2xl gap-6">
-      <section className="card p-4">
-        <h2 className="font-medium">What Whispcord may do here</h2>
-        {!isOwner && <p className="mt-1 text-sm text-muted">Only the person who connected this server can change these.</p>}
-        <div className="mt-4 grid gap-3">
-          {USER_TOGGLEABLE_TIERS.map((t) => (
-            <label key={t} className="flex items-start gap-3 text-sm">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={tiers.includes(t)}
-                disabled={!isOwner}
-                onChange={(e) => save(e.target.checked ? [...tiers, t] : tiers.filter((x) => x !== t))}
-              />
-              <span>
-                <span className="font-medium">{TIER_LABELS[t]?.[0] ?? t}</span>
-                <span className="block text-muted">{TIER_LABELS[t]?.[1]}</span>
-              </span>
-            </label>
-          ))}
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
+      <section className="grid gap-3.5 rounded-[14px] border border-[#333949] bg-gradient-to-b from-[#1c2029] to-[#14171d] p-4" aria-labelledby="deck-title">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="deck-title" className="label-caps">What Whispcord may do here</h2>
+          <span className="label-caps">{armed.length} armed</span>
         </div>
+        {!isOwner && <p className="text-sm text-muted">Only the person who connected this server can change these.</p>}
+
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 2xl:grid-cols-6">
+          {DECK_TIERS.filter((d) => USER_TOGGLEABLE_TIERS.includes(d.tier)).map((d) => {
+            const on = tiers.includes(d.tier);
+            const guarded = d.tier === "destructive";
+            const lever = (
+              <button
+                role="switch"
+                aria-checked={on}
+                aria-label={TIER_LABELS[d.tier]?.[0] ?? d.tier}
+                className="lever"
+                disabled={!isOwner || (guarded && !coverOpen)}
+                tabIndex={guarded && !coverOpen ? -1 : undefined}
+                onClick={() => flip(d.tier)}
+              >
+                <span className="lever-knob" />
+              </button>
+            );
+            const lightOn = guarded ? "led-danger" : "led-ok";
+            return (
+              <div key={d.tier} className="deck-module">
+                <span className="module-plate">{d.short}</span>
+                <span className={`led ${on ? lightOn : ""}`} aria-hidden />
+                {guarded ? (
+                  <div className={`cover-wrap ${coverOpen ? "is-open" : ""}`}>
+                    <button
+                      className="safety-cover"
+                      aria-label="Lift the safety cover to change Deletions"
+                      disabled={!isOwner}
+                      tabIndex={coverOpen ? -1 : undefined}
+                      onClick={() => { setCoverOpen(true); closeCoverIn(5000); }}
+                    >
+                      LIFT
+                    </button>
+                    {lever}
+                  </div>
+                ) : lever}
+                <p className="min-h-[3.1em] text-center text-[11.5px] leading-snug text-muted">{MODULE_CAPTIONS[d.tier]}</p>
+              </div>
+            );
+          })}
+          <div className="deck-module is-sealed" aria-label="Direct messages and user lookups are never available">
+            <span className="module-plate">DMs</span>
+            <span className="led" aria-hidden />
+            <span className="lever opacity-55" aria-hidden><span className="lever-knob" /></span>
+            <span className="weld" aria-hidden>SEALED</span>
+            <span className="screw left-1.5 top-1.5" /><span className="screw right-1.5 top-1.5" />
+            <span className="screw bottom-1.5 left-1.5" /><span className="screw bottom-1.5 right-1.5" />
+            <p className="min-h-[3.1em] text-center text-[11.5px] leading-snug text-muted">DMs and user lookups. Never.</p>
+          </div>
+        </div>
+
         {needsUpgrade && (
-          <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-warn/40 p-3 text-sm">
-            <span className="flex-1">Moderation needs extra bot permissions (kick, ban, timeout, nicknames). Discord will ask you to approve them.</span>
+          <div className="strip strip-warn">
+            <span className="led led-warn" aria-hidden />
+            <p className="min-w-[200px] flex-1">Moderation needs extra bot permissions (kick, ban, timeout, nicknames). Discord will ask you to approve them.</p>
             <button className="btn-primary" onClick={upgradePermissions}>Grant moderation permissions</button>
           </div>
         )}
-        <p className="mt-4 text-xs text-muted">Direct messages and user lookups are never available through Whispcord.</p>
-        {saved && <p className="mt-2 text-sm text-ok">{saved}</p>}
-        {error && <p className="mt-2 text-sm text-danger">{error}</p>}
+
+        <div className="grid min-h-[58px] gap-0.5 rounded-lg border border-[#262b35] bg-[#07090c] px-3 py-2.5 font-mono text-xs text-ok" aria-live="polite">
+          <span>&gt; ARMED: {armed.length ? armed.map((a) => a.short).join(" · ") : "NONE (read only)"}</span>
+          {tiers.includes("destructive")
+            ? <span className="text-warn">&gt; DELETE ARMED: each deletion asks you to type DELETE</span>
+            : <span className="text-dim">&gt; DELETE SAFE: plans cannot delete anything</span>}
+          {saved && <span>&gt; {saved.toUpperCase()}</span>}
+          {error && <span className="text-danger">&gt; {error}</span>}
+        </div>
+
+        <dl className="grid gap-2 border-t border-line pt-3 text-[12.5px] sm:grid-cols-2">
+          {USER_TOGGLEABLE_TIERS.map((t) => (
+            <div key={t}>
+              <dt className="font-semibold">{TIER_LABELS[t]?.[0] ?? t}</dt>
+              <dd className="text-muted">{TIER_LABELS[t]?.[1]}</dd>
+            </div>
+          ))}
+          <div>
+            <dt className="font-semibold">Direct messages and user lookups</dt>
+            <dd className="text-muted">Never available through Whispcord.</dd>
+          </div>
+        </dl>
       </section>
-      <section className="card p-4">
-        <h2 className="font-medium">Disconnect</h2>
-        <p className="mt-1 text-sm text-muted">Stops Whispcord from acting on this server. To remove the bot entirely, kick it in Discord.</p>
-        <button className="btn-danger mt-3" onClick={disconnect}>Disconnect server</button>
+
+      <section className="grid gap-2.5 rounded-[14px] border border-[#333949] bg-gradient-to-b from-[#1c2029] to-[#14171d] p-4" aria-labelledby="disconnect-title">
+        <h2 id="disconnect-title" className="label-caps text-danger">Disconnect</h2>
+        <p className="text-[13px] text-muted">Stops Whispcord from acting on this server. To remove the bot entirely, kick it in Discord.</p>
+        <HoldButton label="Hold to disconnect" disabled={!isOwner} onConfirm={disconnect} />
       </section>
     </div>
+  );
+}
+
+/** A button you hold for 1.5 seconds. Replaces a confirm() dialog for disconnecting. */
+function HoldButton({ label, disabled, onConfirm }: { label: string; disabled?: boolean; onConfirm: () => void }) {
+  const fill = useRef<HTMLSpanElement>(null);
+  const raf = useRef(0);
+  const start = useRef(0);
+  const done = useRef(false);
+
+  const stop = () => {
+    cancelAnimationFrame(raf.current);
+    start.current = 0;
+    if (fill.current && !done.current) fill.current.style.transform = "scaleX(0)";
+  };
+  const tick = (ts: number) => {
+    if (!start.current) start.current = ts;
+    const p = Math.min(1, (ts - start.current) / 1500);
+    if (fill.current) fill.current.style.transform = `scaleX(${p})`;
+    if (p >= 1) {
+      done.current = true;
+      onConfirm();
+    } else raf.current = requestAnimationFrame(tick);
+  };
+  const begin = () => {
+    if (disabled || done.current) return;
+    stop();
+    raf.current = requestAnimationFrame(tick);
+  };
+
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+
+  return (
+    <button
+      className="hold-btn disabled:cursor-not-allowed disabled:opacity-50"
+      disabled={disabled}
+      onPointerDown={(e) => { e.preventDefault(); begin(); }}
+      onPointerUp={stop}
+      onPointerLeave={stop}
+      onKeyDown={(e) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); begin(); } }}
+      onKeyUp={stop}
+    >
+      <span ref={fill} className="hold-fill" style={{ transform: "scaleX(0)" }} />
+      <span className="relative">{label.toUpperCase()}</span>
+    </button>
   );
 }

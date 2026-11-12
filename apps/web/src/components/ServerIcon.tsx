@@ -7,10 +7,10 @@ export function ServerIcon({ name, icon, size = 40 }: { name: string; icon: stri
     .slice(0, 3)
     .toUpperCase();
   return icon ? (
-    <img src={icon} alt="" width={size} height={size} className="rounded-xl" />
+    <img src={icon} alt="" width={size} height={size} className="shrink-0 rounded-[10px] border border-[#343b49]" />
   ) : (
     <span
-      className="inline-flex items-center justify-center rounded-xl bg-panel-2 text-xs font-semibold text-muted"
+      className="inline-flex shrink-0 items-center justify-center rounded-[10px] border border-[#343b49] bg-well font-display text-xs font-extrabold text-muted"
       style={{ width: size, height: size }}
     >
       {initials}
