@@ -34,6 +34,10 @@ const EnvSchema = z.object({
   /** Live watch: most automatic deletions per server per hour. */
   LIVE_WATCH_MAX_AUTO_DELETES_PER_HOUR: z.coerce.number().default(30),
   LIVE_WATCH_MAX_ACTIVE_PER_SERVER: z.coerce.number().default(3),
+  /** Live watch: also check image attachments (JPEG, PNG, GIF, WebP up to 5 MB). "false" = text only. */
+  LIVE_WATCH_IMAGES: z.string().default("true").transform((v) => v.trim().toLowerCase() !== "false"),
+  /** Live watch: most images checked per server per hour (images cost far more than text). */
+  LIVE_WATCH_MAX_IMAGES_PER_HOUR: z.coerce.number().default(300),
 
   SUPABASE_URL: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),

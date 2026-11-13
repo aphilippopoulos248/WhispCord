@@ -242,7 +242,7 @@ export function WatchPanel({ feed, enabled, connected, channelName, onPlan, onSe
           )}
         </div>
         <p className="px-1 text-[12px] leading-relaxed text-muted">
-          New messages in watched channels are sent to Anthropic (Claude) to check them. Flags, with a short excerpt, are kept for 30 days.
+          New messages in watched channels, including attached images, are sent to Anthropic (Claude) to check them. Images aren’t stored. Flags, with a short text excerpt, are kept for 30 days.
           Auto-delete only removes high-severity matches and needs Deletions switched on.
         </p>
       </aside>

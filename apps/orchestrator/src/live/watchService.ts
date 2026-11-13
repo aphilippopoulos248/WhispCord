@@ -15,6 +15,7 @@ import type { Config } from "../config.js";
 import type { LocalTool } from "../gateway/gateway.js";
 import type { DiscordMcp, McpToolDef, ToolCallResult, WhispcordInternal } from "../mcp/client.js";
 import type { Profile, Server, Store } from "../store/types.js";
+import { MAX_IMAGE_BYTES, makeImageFetcher, type FetchedImage, type ImageFetcher } from "./images.js";
 
 /**
  * Live moderation ("flag hurtful messages as they're posted").
@@ -25,6 +26,8 @@ import type { Profile, Server, Store } from "../store/types.js";
  *   other servers' messages never leave the bot.
  * - Messages are batched and sent to the same tool-less classifier as message search. Message
  *   text never reaches the planner (security rule 8); flags go to server members in the WATCH panel.
+ * - Image attachments are fetched from Discord's CDN only (see images.ts), sent to the classifier
+ *   with their message, and never stored. Capped per server per hour (LIVE_WATCH_MAX_IMAGES_PER_HOUR).
  * - Auto-delete is limited to high-severity matches, re-checks the watch creator's permissions
  *   (Manage Server + Manage Messages) before deleting, and is capped per hour.
  */
@@ -45,10 +48,20 @@ export const IncomingMessageSchema = z.object({
   createdAt: z.string().max(64),
   content: z.string().max(4000),
   jumpUrl: z.string().url().max(300),
+  /** Image attachments as Discord CDN links; fetched (and checked) only when classifying. */
+  images: z
+    .array(z.object({ url: z.string().url().max(2000), contentType: z.string().max(100), size: z.number().int().nonnegative() }))
+    .max(4)
+    .default([]),
 });
-export type IncomingMessage = z.infer<typeof IncomingMessageSchema>;
+type ParsedMessage = z.infer<typeof IncomingMessageSchema>;
+export type IncomingMessage = Omit<ParsedMessage, "images"> & { images?: ParsedMessage["images"] };
 
 const MAX_EXCERPT = 300;
+/** Per classifier call, so one request stays well under Anthropic's request size limit. */
+const MAX_IMAGES_PER_CALL = 8;
+const MAX_IMAGE_BYTES_PER_CALL = 20 * 1024 * 1024;
+const IMAGE_FETCH_CONCURRENCY = 4;
 const PERMISSION_CACHE_MS = 5 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -59,7 +72,12 @@ export interface LiveWatchDeps {
   anthropic: Anthropic | null;
   config: Config;
   log?: { info: (m: string) => void; warn: (m: string) => void };
+  /** Downloads an image attachment (tests pass a fake). Defaults to Discord-CDN-only fetch. */
+  fetchImage?: ImageFetcher;
 }
+
+/** A queued message with its images, once fetched. */
+type Queued = IncomingMessage & { images: NonNullable<IncomingMessage["images"]>; fetched?: FetchedImage[] };
 
 interface ActiveServer {
   server: Server;
@@ -70,8 +88,19 @@ interface HourWindow {
   start: number;
   classified: number;
   deleted: number;
+  images: number;
   warnedClassify: boolean;
   warnedDelete: boolean;
+  warnedImages: boolean;
+}
+
+/** The text shown in the WATCH log. Images are never stored, only noted ("[2 images]"). */
+function excerptFor(msg: Queued): string {
+  const n = msg.fetched?.length ?? 0;
+  const note = n ? `[${n === 1 ? "image" : `${n} images`}]` : "";
+  const text = msg.content.trim();
+  if (!note) return text.slice(0, MAX_EXCERPT);
+  return text ? `${text.slice(0, MAX_EXCERPT - note.length - 1)} ${note}` : note;
 }
 
 const canManageMessages = (p: MemberPermissions) =>
@@ -104,7 +133,8 @@ export const LIVE_TOOL_DEFS = {
 
 export class LiveWatchService {
   private active = new Map<string, ActiveServer>();
-  private buffers = new Map<string, IncomingMessage[]>();
+  private buffers = new Map<string, Queued[]>();
+  private readonly fetchImage: ImageFetcher;
   private timers = new Map<string, NodeJS.Timeout>();
   private windows = new Map<string, HourWindow>();
   private permCache = new Map<string, { ok: boolean; at: number }>();
@@ -115,6 +145,7 @@ export class LiveWatchService {
 
   constructor(private readonly d: LiveWatchDeps) {
     this.emitter.setMaxListeners(0);
+    this.fetchImage = d.fetchImage ?? makeImageFetcher();
   }
 
   /** Loads active watches, tells discord-mcp which servers to forward, and re-syncs every minute. */
@@ -272,8 +303,9 @@ export class LiveWatchService {
   // ---------------- ingest → classify → flag ----------------
 
   /** Queues a new message for classification. Returns false if its server isn't being watched. */
-  ingest(msg: IncomingMessage): boolean {
-    if (!this.active.has(msg.guildId) || !msg.content.trim()) return false;
+  ingest(incoming: IncomingMessage): boolean {
+    const msg: Queued = { ...incoming, images: this.d.config.LIVE_WATCH_IMAGES ? (incoming.images ?? []) : [] };
+    if (!this.active.has(msg.guildId) || (!msg.content.trim() && msg.images.length === 0)) return false;
     const buf = this.buffers.get(msg.guildId) ?? [];
     buf.push(msg);
     this.buffers.set(msg.guildId, buf);
@@ -296,7 +328,7 @@ export class LiveWatchService {
     const now = Date.now();
     let w = this.windows.get(serverId);
     if (!w || now - w.start > HOUR_MS) {
-      w = { start: now, classified: 0, deleted: 0, warnedClassify: false, warnedDelete: false };
+      w = { start: now, classified: 0, deleted: 0, images: 0, warnedClassify: false, warnedDelete: false, warnedImages: false };
       this.windows.set(serverId, w);
     }
     return w;
@@ -324,21 +356,80 @@ export class LiveWatchService {
     if (batch.length === 0) return;
     win.classified += batch.length;
 
+    // Fetch images once per message (shared by every watch on this server), within the hourly cap.
+    const inAnyScope = (m: Queued) => entry.watches.some((w) => this.inScope(w, m));
+    await this.fetchImages(entry, win, batch.filter(inAnyScope));
+    // An image-only message whose images couldn't be fetched has nothing left to check.
+    const checkable = batch.filter((m) => m.content.trim() || m.fetched?.length);
+
     for (const watch of entry.watches) {
-      const inScope = batch.filter((m) =>
-        watch.channelIds.length === 0 || watch.channelIds.includes(m.channelId) || (m.parentChannelId ? watch.channelIds.includes(m.parentChannelId) : false),
-      );
+      const inScope = checkable.filter((m) => this.inScope(watch, m));
       if (inScope.length) await this.classifyForWatch(entry, watch, inScope);
     }
   }
 
-  private async classifyForWatch(entry: ActiveServer, watch: LiveWatch, msgs: IncomingMessage[]): Promise<void> {
-    const candidates = msgs.map((m) => ({ authorName: m.authorName, channelName: m.channelName, content: m.content }));
+  private inScope(watch: LiveWatch, m: IncomingMessage): boolean {
+    return watch.channelIds.length === 0 || watch.channelIds.includes(m.channelId) || (m.parentChannelId ? watch.channelIds.includes(m.parentChannelId) : false);
+  }
+
+  private async fetchImages(entry: ActiveServer, win: HourWindow, msgs: Queued[]): Promise<void> {
+    const jobs: Array<{ msg: Queued; url: string }> = [];
+    for (const msg of msgs) {
+      for (const img of msg.images) {
+        if (win.images >= this.d.config.LIVE_WATCH_MAX_IMAGES_PER_HOUR) {
+          if (!win.warnedImages) {
+            win.warnedImages = true;
+            this.emit(entry.server.id, {
+              type: "notice", level: "warn",
+              message: `This server hit its limit of ${this.d.config.LIVE_WATCH_MAX_IMAGES_PER_HOUR} checked images this hour. Message text is still checked; images aren't until the hour is up.`,
+            });
+          }
+          break;
+        }
+        if (img.size > MAX_IMAGE_BYTES) continue;
+        win.images++;
+        jobs.push({ msg, url: img.url });
+      }
+    }
+    let next = 0;
+    const worker = async () => {
+      while (next < jobs.length) {
+        const job = jobs[next++]!;
+        const image = await this.fetchImage(job.url);
+        if (image) (job.msg.fetched ??= []).push(image);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(IMAGE_FETCH_CONCURRENCY, jobs.length) }, worker));
+  }
+
+  /** Splits messages into classifier calls: at most BATCH_SIZE messages and a bounded number of image bytes each. */
+  private chunks(msgs: Queued[]): number[][] {
+    const out: number[][] = [];
+    let cur: number[] = [];
+    let images = 0;
+    let bytes = 0;
+    msgs.forEach((m, i) => {
+      const n = m.fetched?.length ?? 0;
+      const b = (m.fetched ?? []).reduce((s, img) => s + img.data.length, 0);
+      if (cur.length && (cur.length >= this.d.config.LIVE_WATCH_BATCH_SIZE || images + n > MAX_IMAGES_PER_CALL || bytes + b > MAX_IMAGE_BYTES_PER_CALL)) {
+        out.push(cur);
+        cur = [];
+        images = 0;
+        bytes = 0;
+      }
+      cur.push(i);
+      images += n;
+      bytes += b;
+    });
+    if (cur.length) out.push(cur);
+    return out;
+  }
+
+  private async classifyForWatch(entry: ActiveServer, watch: LiveWatch, msgs: Queued[]): Promise<void> {
+    const candidates = msgs.map((m) => ({ authorName: m.authorName, channelName: m.channelName, content: m.content, images: m.fetched }));
     const matched = new Map<number, { severity: LiveFlag["severity"]; reason: string }>();
     const usage = { inputTokens: 0, outputTokens: 0 };
-    const size = this.d.config.LIVE_WATCH_BATCH_SIZE;
-    for (let i = 0; i < candidates.length; i += size) {
-      const idx = Array.from({ length: Math.min(size, candidates.length - i) }, (_, k) => i + k);
+    for (const idx of this.chunks(msgs)) {
       const ok = await classifyBatch({ anthropic: this.d.anthropic!, model: this.d.config.WHISPCORD_CLASSIFIER_MODEL }, watch.criteria, idx, candidates, matched, usage);
       if (!ok) this.d.log?.warn(`Live watch ${watch.id}: a batch of ${idx.length} message(s) couldn't be classified`);
     }
@@ -351,7 +442,7 @@ export class LiveWatchService {
       const flag = await this.d.store.insertFlag({
         watchId: watch.id, serverId: entry.server.id, messageId: msg.messageId, channelId: msg.channelId, channelName: msg.channelName,
         authorId: msg.authorId, authorName: msg.authorName, postedAt: msg.createdAt, severity: m.severity, reason: m.reason,
-        excerpt: msg.content.slice(0, MAX_EXCERPT), jumpUrl: msg.jumpUrl, action: "none", actionError: null,
+        excerpt: excerptFor(msg), jumpUrl: msg.jumpUrl, action: "none", actionError: null,
       });
       if (!flag) continue; // already flagged by this watch
       this.emit(entry.server.id, { type: "flag", flag });

@@ -445,7 +445,7 @@ const TIER_LABELS: Record<string, [string, string]> = {
   ],
   live_watch: [
     "Live watch",
-    "Watch new messages as they’re posted and flag the ones that match, like “hurtful messages”. While a watch runs, every new message in its channels is sent to Anthropic (Claude) to check it; flags are kept for 30 days. A watch can auto-delete high-severity matches only if Deletions is on and you type DELETE when approving it. Tell your members in your server rules. Needs Discord’s Message Content intent.",
+    "Watch new messages as they’re posted and flag the ones that match, like “hurtful messages”. While a watch runs, every new message in its channels, including attached images, is sent to Anthropic (Claude) to check it (images aren’t stored); flags are kept for 30 days. A watch can auto-delete high-severity matches only if Deletions is on and you type DELETE when approving it. Tell your members in your server rules. Needs Discord’s Message Content intent.",
   ],
 };
 

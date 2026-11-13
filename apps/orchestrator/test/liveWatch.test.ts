@@ -7,7 +7,8 @@ import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { GatewayError } from "../src/gateway/gateway.js";
 import { extractCreatedId } from "../src/gateway/results.js";
-import { LiveWatchService, type IncomingMessage } from "../src/live/watchService.js";
+import { makeImageFetcher, sniffImageType, type FetchedImage, type ImageFetcher } from "../src/live/images.js";
+import { IncomingMessageSchema, LiveWatchService, type IncomingMessage } from "../src/live/watchService.js";
 import { WhispcordInternal } from "../src/mcp/client.js";
 import { RunEvents } from "../src/runs/events.js";
 import { RunService } from "../src/runs/service.js";
@@ -30,26 +31,67 @@ const code = async (p: Promise<unknown>) => {
   }
 };
 
-/** Fake classifier: matches by substring and records every text it was shown. */
+type Block = { type: "text"; text: string } | { type: "image"; source: { media_type: string; data: string } };
+
+/**
+ * Fake classifier: matches by substring and records every text it was shown. Images (fake PNGs
+ * whose bytes carry a word, see fakeImage) are "read" by decoding them and checked the same way.
+ */
 function fakeClassifier(classify: (text: string) => "low" | "medium" | "high" | null) {
   const seen: string[] = [];
+  const seenImages: Array<{ message: number; mediaType: string; text: string }> = [];
+  const calls: Array<{ messages: number; images: number }> = [];
   const client = {
     messages: {
-      parse: async (params: { messages: Array<{ content: string }> }) => {
-        const lines = params.messages[0]!.content.split("\n").filter((l) => l.startsWith("{"));
+      parse: async (params: { messages: Array<{ content: string | Block[] }> }) => {
+        const content = params.messages[0]!.content;
+        const blocks: Block[] = typeof content === "string" ? [{ type: "text", text: content }] : content;
+        const text = blocks.map((b) => (b.type === "text" ? b.text : "")).join("");
+        const lines = text.split("\n").filter((l) => l.startsWith("{")).map((l) => JSON.parse(l) as { i: number; text: string });
+        // Images belong to the message named in the label just before them.
+        const imageText = new Map<number, string>();
+        let owner = -1;
+        for (const b of blocks) {
+          if (b.type === "text") {
+            const m = /\[image \d+ of \d+ for message (\d+)\]$/.exec(b.text);
+            if (m) owner = Number(m[1]);
+          } else {
+            const decoded = Buffer.from(b.source.data, "base64").subarray(8).toString("utf8");
+            seenImages.push({ message: owner, mediaType: b.source.media_type, text: decoded });
+            imageText.set(owner, `${imageText.get(owner) ?? ""} ${decoded}`);
+          }
+        }
+        calls.push({ messages: lines.length, images: blocks.filter((b) => b.type === "image").length });
         const matches = lines
-          .map((l) => JSON.parse(l) as { i: number; text: string })
           .map((m) => {
             seen.push(m.text);
-            return { i: m.i, severity: classify(m.text), reason: "Insults another member" };
+            return { i: m.i, severity: classify(`${m.text} ${imageText.get(m.i) ?? ""}`), reason: "Insults another member" };
           })
           .filter((m) => m.severity);
         return { stop_reason: "end_turn", parsed_output: { matches }, usage: { input_tokens: 100, output_tokens: 20 } };
       },
     },
   };
-  return { client: client as unknown as Anthropic, seen };
+  return { client: client as unknown as Anthropic, seen, seenImages, calls };
 }
+
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+/** A fake PNG whose bytes after the header spell out `word`, so the fake classifier can "see" it. */
+const fakeImage = (word: string): FetchedImage => {
+  const buf = Buffer.concat([PNG_MAGIC, Buffer.from(word)]);
+  return { mediaType: "image/png", data: buf.toString("base64"), bytes: buf.length };
+};
+/** Fake fetcher: https://cdn.discordapp.com/attachments/1/2/<word>.png → an image showing <word>. */
+function fakeFetcher() {
+  const fetched: string[] = [];
+  const fetchImage: ImageFetcher = async (url) => {
+    fetched.push(url);
+    const word = /\/([a-z]+)\.png/.exec(url)?.[1];
+    return word && word !== "broken" ? fakeImage(word) : null;
+  };
+  return { fetchImage, fetched };
+}
+const img = (word: string) => ({ url: `https://cdn.discordapp.com/attachments/1/2/${word}.png?ex=1&is=2&hm=3`, contentType: "image/png", size: 1000 });
 
 let nextMessage = 800000000000000100n;
 const msg = (content: string, over: Partial<IncomingMessage> = {}): IncomingMessage => {
@@ -61,8 +103,13 @@ const msg = (content: string, over: Partial<IncomingMessage> = {}): IncomingMess
   };
 };
 
-async function setup(tiers: Tier[] = WATCH_TIERS, classify = (t: string) => (t.includes("trash") ? "high" as const : t.includes("dumb") ? "medium" as const : null)) {
-  const config = loadConfig({ RECONCILE_INTERVAL_MINUTES: "0", WHISPCORD_MCP_SECRET: SECRET, WEB_ORIGIN: "http://localhost:3000" } as NodeJS.ProcessEnv);
+async function setup(
+  tiers: Tier[] = WATCH_TIERS,
+  classify = (t: string) => (t.includes("trash") ? "high" as const : t.includes("dumb") ? "medium" as const : null),
+  opts: { env?: Record<string, string> } = {},
+) {
+  const config = loadConfig({ RECONCILE_INTERVAL_MINUTES: "0", WHISPCORD_MCP_SECRET: SECRET, WEB_ORIGIN: "http://localhost:3000", ...opts.env } as NodeJS.ProcessEnv);
+  const images = fakeFetcher();
   const store = new MemoryStore();
   store.addProfile({ id: "p-owner", authUserId: "u-owner", discordUserId: USER, username: "owner", manageableGuilds: [] });
   store.addProfile({ id: "p-member", authUserId: "u-member", discordUserId: MEMBER, username: "member", manageableGuilds: [] });
@@ -71,7 +118,7 @@ async function setup(tiers: Tier[] = WATCH_TIERS, classify = (t: string) => (t.i
   await store.upsertConnectedServer({ guildId: GUILD, name: "Test", icon: null, profileId: "p-owner", botRoleOk: true });
   await store.updateServer(GUILD, { enabledTiers: tiers });
   const claude = fakeClassifier(classify);
-  const live = new LiveWatchService({ store, mcp, internal, anthropic: claude.client, config });
+  const live = new LiveWatchService({ store, mcp, internal, anthropic: claude.client, config, fetchImage: images.fetchImage });
   await live.refresh();
   const profile = (await store.getProfileByAuthUser("u-owner"))!;
   const server = (await store.getServerByGuildId(GUILD))!;
@@ -79,7 +126,7 @@ async function setup(tiers: Tier[] = WATCH_TIERS, classify = (t: string) => (t.i
     makeGateway({ mcp, enabledTiers: opts.tiers ?? tiers, destructiveConfirmed: opts.destructiveConfirmed, localTools: live.localTools(server, profile, null) }).gateway;
   const events: WatchEvent[] = [];
   live.subscribe(server.id, (e) => events.push(e));
-  return { config, store, mcp, internal, live, profile, server, gateway, claude, events };
+  return { config, store, mcp, internal, live, profile, server, gateway, claude, events, images };
 }
 
 async function startWatch(ctx: Awaited<ReturnType<typeof setup>>, args: Record<string, string>, opts: { destructiveConfirmed?: boolean } = {}) {
@@ -319,5 +366,119 @@ describe("live watch: API", () => {
     const upgrade = await ctx.app.inject({ method: "POST", url: `/servers/${GUILD}/permissions-upgrade`, headers: auth("u-owner") });
     const perms = BigInt(new URL((upgrade.json() as { authorizeUrl: string }).authorizeUrl).searchParams.get("permissions")!);
     expect(perms & P.MANAGE_MESSAGES).toBe(P.MANAGE_MESSAGES);
+  });
+});
+
+describe("live watch: images", () => {
+  it("flags an image-only message from what the image shows, and never stores the image", async () => {
+    const ctx = await setup();
+    await startWatch(ctx, { criteria: "hurtful messages" });
+    expect(ctx.live.ingest(msg("", { images: [img("trash")] }))).toBe(true);
+    expect(ctx.live.ingest(msg("look at my cat", { images: [img("cat")] }))).toBe(true);
+    await ctx.live.flushAll();
+
+    expect(ctx.images.fetched).toHaveLength(2);
+    expect(ctx.claude.seenImages.map((i) => i.text).sort()).toEqual(["cat", "trash"]);
+    const flags = await ctx.store.listFlags(ctx.server.id, 10);
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.excerpt).toBe("[image]");
+    expect(JSON.stringify(flags)).not.toContain("cdn.discordapp.com");
+  });
+
+  it("ties each image to its own message", async () => {
+    const ctx = await setup();
+    await startWatch(ctx, { criteria: "hurtful messages" });
+    ctx.live.ingest(msg("first, harmless", { images: [img("cat")] }));
+    ctx.live.ingest(msg("second", { images: [img("dog"), img("trash")] }));
+    await ctx.live.flushAll();
+    const flags = await ctx.store.listFlags(ctx.server.id, 10);
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.excerpt).toBe("second [2 images]");
+  });
+
+  it("skips an image-only message whose image couldn't be fetched", async () => {
+    const ctx = await setup();
+    await startWatch(ctx, { criteria: "hurtful messages" });
+    ctx.live.ingest(msg("", { images: [img("broken")] }));
+    await ctx.live.flushAll();
+    expect(ctx.claude.calls).toHaveLength(0);
+  });
+
+  it("caps images per server per hour and says so, but keeps checking text", async () => {
+    const ctx = await setup(WATCH_TIERS, undefined, { env: { LIVE_WATCH_MAX_IMAGES_PER_HOUR: "1" } });
+    await startWatch(ctx, { criteria: "hurtful messages" });
+    ctx.live.ingest(msg("one", { images: [img("cat")] }));
+    ctx.live.ingest(msg("worthless trash", { images: [img("dog")] }));
+    await ctx.live.flushAll();
+    expect(ctx.images.fetched).toHaveLength(1);
+    expect(ctx.events.some((e) => e.type === "notice" && e.message.includes("checked images"))).toBe(true);
+    expect(await ctx.store.listFlags(ctx.server.id, 10)).toHaveLength(1);
+  });
+
+  it("splits image-heavy batches across classifier calls", async () => {
+    const ctx = await setup();
+    await startWatch(ctx, { criteria: "hurtful messages" });
+    for (let i = 0; i < 5; i++) ctx.live.ingest(msg(`m${i}`, { images: [img("cat"), img("dog"), img("cow"), img("pig")] }));
+    await ctx.live.flushAll();
+    expect(ctx.claude.calls.every((c) => c.images <= 8)).toBe(true);
+    expect(ctx.claude.calls.reduce((s, c) => s + c.images, 0)).toBe(20);
+  });
+
+  it("ignores images when LIVE_WATCH_IMAGES is false", async () => {
+    const ctx = await setup(WATCH_TIERS, undefined, { env: { LIVE_WATCH_IMAGES: "false" } });
+    await startWatch(ctx, { criteria: "hurtful messages" });
+    expect(ctx.live.ingest(msg("", { images: [img("trash")] }))).toBe(false);
+    ctx.live.ingest(msg("hello", { images: [img("trash")] }));
+    await ctx.live.flushAll();
+    expect(ctx.images.fetched).toHaveLength(0);
+    expect(await ctx.store.listFlags(ctx.server.id, 10)).toHaveLength(0);
+  });
+
+  it("accepts forwarded images in the webhook payload (at most 4)", () => {
+    const base = { ...msg("hi"), images: [img("cat")] };
+    expect(IncomingMessageSchema.parse(base).images).toHaveLength(1);
+    expect(IncomingMessageSchema.parse({ ...base, images: undefined }).images).toEqual([]);
+    expect(IncomingMessageSchema.safeParse({ ...base, images: Array(5).fill(img("cat")) }).success).toBe(false);
+  });
+});
+
+describe("image fetcher", () => {
+  const png = Buffer.concat([PNG_MAGIC, Buffer.from("pixels")]);
+  const fakeFetch = (body: Uint8Array, type = "image/png") => {
+    const urls: string[] = [];
+    const f = (async (url: string) => {
+      urls.push(url);
+      return new Response(body, { headers: { "content-type": type } });
+    }) as unknown as typeof fetch;
+    return { f, urls };
+  };
+
+  it("fetches only from Discord's CDN over https", async () => {
+    const { f, urls } = fakeFetch(png);
+    const fetchImage = makeImageFetcher(f);
+    for (const bad of [
+      "http://cdn.discordapp.com/a.png",
+      "https://evil.example/a.png",
+      "https://cdn.discordapp.com.evil.example/a.png",
+      "https://169.254.169.254/latest/meta-data",
+      "https://localhost:8085/mcp",
+      "https://cdn.discordapp.com:8443/a.png",
+      "https://user:pass@cdn.discordapp.com/a.png",
+    ]) {
+      expect(await fetchImage(bad)).toBeNull();
+    }
+    expect(urls).toEqual([]);
+    expect(await fetchImage("https://media.discordapp.net/attachments/1/2/a.png")).toMatchObject({ mediaType: "image/png" });
+  });
+
+  it("rejects files that aren't really images, and anything over 5 MB", async () => {
+    expect(await makeImageFetcher(fakeFetch(Buffer.from("<html>not an image</html>")).f)("https://cdn.discordapp.com/a.png")).toBeNull();
+    expect(await makeImageFetcher(fakeFetch(png, "text/html").f)("https://cdn.discordapp.com/a.png")).toBeNull();
+    const big = Buffer.concat([PNG_MAGIC, Buffer.alloc(5 * 1024 * 1024)]);
+    expect(await makeImageFetcher(fakeFetch(big).f)("https://cdn.discordapp.com/a.png")).toBeNull();
+    // The real type comes from the bytes, not the label.
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]);
+    expect(await makeImageFetcher(fakeFetch(jpeg, "image/png").f)("https://cdn.discordapp.com/a.png")).toMatchObject({ mediaType: "image/jpeg" });
+    expect(sniffImageType(Buffer.from("GIF89a"))).toBe("image/gif");
   });
 });
