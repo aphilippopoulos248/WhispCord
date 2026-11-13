@@ -108,6 +108,10 @@ export async function buildApp(deps: AppDeps) {
   }
 
   // ---------- health ----------
+  // Liveness only (the process is up). Deploy health checks use this, so a discord-mcp restart
+  // doesn't fail an orchestrator deploy.
+  app.get("/livez", async () => ({ ok: true }));
+
   // 503 when discord-mcp is unreachable, so load balancers and uptime checks notice.
   app.get("/health", async (_req, reply) => {
     try {

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "apps/orchestrator/Dockerfile",
+    "watchPatterns": [
+      "/apps/orchestrator/**",
+      "/packages/shared/**",
+      "/package.json",
+      "/package-lock.json",
+      "/tsconfig.base.json",
+      "/railway/orchestrator.json"
+    ]
+  },
+  "deploy": {
+    "numReplicas": 1,
+    "healthcheckPath": "/livez",
+    "healthcheckTimeout": 60,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  }
+}

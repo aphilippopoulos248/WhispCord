@@ -220,6 +220,12 @@ describe("health", () => {
     expect(down.statusCode).toBe(503);
     expect((down.json() as { discordMcp: string }).discordMcp).toBe("down");
   });
+
+  it("livez stays up while discord-mcp is down", async () => {
+    const ctx = await setup();
+    ctx.mcp.down = true;
+    expect((await ctx.app.inject({ method: "GET", url: "/livez" })).statusCode).toBe(200);
+  });
 });
 
 describe("maintenance", () => {
