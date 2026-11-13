@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import cors from "@fastify/cors";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  MESSAGE_MODERATION_PERMISSIONS,
   MODERATION_PERMISSIONS,
   USER_TOGGLEABLE_TIERS,
   botRoleOk,
@@ -11,11 +12,13 @@ import {
   parsePermissions,
   type RunEvent,
   type Tier,
+  type WatchEvent,
 } from "@whispcord/shared";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Config } from "./config.js";
 import { fetchManageableGuilds } from "./discord.js";
+import { IncomingMessageSchema, type LiveWatchService } from "./live/watchService.js";
 import type { WhispcordInternal } from "./mcp/client.js";
 import type { RunEvents } from "./runs/events.js";
 import { HttpError, type RunService } from "./runs/service.js";
@@ -27,6 +30,8 @@ export interface AppDeps {
   internal: WhispcordInternal;
   runs: RunService;
   events: RunEvents;
+  /** Live moderation. Optional so tests and the CLI can run without it. */
+  live?: LiveWatchService;
   /** Resolves a Supabase access token to the auth user id. */
   verifyToken: (token: string) => Promise<string | null>;
 }
@@ -39,6 +44,16 @@ export function supabaseTokenVerifier(db: SupabaseClient) {
   };
 }
 
+/**
+ * Extra bot permissions a server's tiers need beyond the Builder invite, or null for none.
+ * Live watches that auto-delete need Manage Messages on top of moderation.
+ */
+function upgradePermissionsFor(tiers: readonly Tier[]): bigint | null {
+  if (tiers.includes("live_watch") && tiers.includes("destructive")) return MESSAGE_MODERATION_PERMISSIONS;
+  if (tiers.includes("moderate")) return MODERATION_PERMISSIONS;
+  return null;
+}
+
 function safeEqual(a: string, b: string) {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
@@ -46,7 +61,7 @@ function safeEqual(a: string, b: string) {
 }
 
 export async function buildApp(deps: AppDeps) {
-  const { config, store, internal, runs, events } = deps;
+  const { config, store, internal, runs, events, live } = deps;
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
   await app.register(cors, {
     origin: [config.WEB_ORIGIN],
@@ -193,11 +208,14 @@ export async function buildApp(deps: AppDeps) {
     const tiers = body.enabledTiers.filter((t): t is Tier => (USER_TOGGLEABLE_TIERS as string[]).includes(t));
     const enabledTiers: Tier[] = ["read", ...tiers];
     await store.updateServer(server.guildId, { enabledTiers });
-    // Moderation tools need permissions the Builder invite didn't grant.
+    // Switching Live watch off pauses this server's watches straight away.
+    await live?.refresh();
+    // Moderation tools (and deleting members' messages) need permissions the Builder invite didn't grant.
     let needsPermissionUpgrade = false;
-    if (enabledTiers.includes("moderate")) {
+    const wanted = upgradePermissionsFor(enabledTiers);
+    if (wanted !== null) {
       const status = await internal.botStatus(server.guildId);
-      needsPermissionUpgrade = status.inGuild && !isSubset(MODERATION_PERMISSIONS, parsePermissions(status.permissions));
+      needsPermissionUpgrade = status.inGuild && !isSubset(wanted, parsePermissions(status.permissions));
     }
     return { enabledTiers, needsPermissionUpgrade };
   });
@@ -221,7 +239,7 @@ export async function buildApp(deps: AppDeps) {
         guildId: server.guildId,
         redirectUri: config.DISCORD_BOT_REDIRECT_URI,
         state,
-        permissions: MODERATION_PERMISSIONS,
+        permissions: upgradePermissionsFor(server.enabledTiers) ?? MODERATION_PERMISSIONS,
       }),
     };
   });
@@ -231,6 +249,7 @@ export async function buildApp(deps: AppDeps) {
     const server = await requireServer(profile, req.params.guildId);
     if (server.ownerProfileId === profile.id) {
       await store.updateServer(server.guildId, { status: "disconnected" });
+      await live?.refresh();
     } else {
       await store.removeServerMember(server.id, profile.id);
     }
@@ -323,16 +342,86 @@ export async function buildApp(deps: AppDeps) {
     });
   });
 
+  // ---------- live watch (WATCH panel) ----------
+  function requireLive(): LiveWatchService {
+    if (!live) throw new HttpError(503, "Live watch isn't available on this Whispcord instance.");
+    return live;
+  }
+
+  /** Stopping a watch or dismissing a flag needs Manage Server right now, like starting a run. */
+  async function requireManager(profile: Profile, server: Server) {
+    const perms = await internal.memberPermissions(server.guildId, profile.discordUserId);
+    if (!perms.canManageServer) throw new HttpError(403, "You need Manage Server on this server.");
+  }
+
+  app.get<{ Params: { guildId: string } }>("/servers/:guildId/watch", async (req) => {
+    const profile = await requireProfile(req);
+    const server = await requireServer(profile, req.params.guildId);
+    return requireLive().overview(server);
+  });
+
+  app.post<{ Params: { guildId: string; watchId: string } }>("/servers/:guildId/watches/:watchId/stop", async (req) => {
+    const profile = await requireProfile(req);
+    const server = await requireServer(profile, req.params.guildId);
+    await requireManager(profile, server);
+    const res = await requireLive().stopWatch(server, req.params.watchId);
+    if (res.isError) throw new HttpError(404, res.text);
+    return { ok: true };
+  });
+
+  app.post<{ Params: { guildId: string; flagId: string } }>("/servers/:guildId/flags/:flagId/dismiss", async (req) => {
+    const profile = await requireProfile(req);
+    const server = await requireServer(profile, req.params.guildId);
+    await requireManager(profile, server);
+    const flag = await requireLive().dismiss(server, req.params.flagId).catch(() => {
+      throw new HttpError(404, "Flag not found.");
+    });
+    return { flag };
+  });
+
+  /** Live flags as they arrive (fetch-streaming SSE, like /runs/:runId/events). */
+  app.get<{ Params: { guildId: string } }>("/servers/:guildId/watch/events", async (req, reply: FastifyReply) => {
+    const profile = await requireProfile(req);
+    const server = await requireServer(profile, req.params.guildId);
+    const service = requireLive();
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": config.WEB_ORIGIN,
+    });
+    const send = (e: WatchEvent) => res.write(`data: ${JSON.stringify(e)}\n\n`);
+    const unsubscribe = service.subscribe(server.id, send);
+    const ping = setInterval(() => res.write(": ping\n\n"), 15000);
+    req.raw.on("close", () => {
+      clearInterval(ping);
+      unsubscribe();
+    });
+  });
+
   // ---------- internal (discord-mcp → orchestrator) ----------
+  const GuildEventSchema = z.object({ type: z.enum(["guild_join", "guild_leave"]), guildId: z.string(), guildName: z.string().optional() });
+
   app.post("/internal/discord-events", async (req, reply) => {
     const header = req.headers.authorization ?? "";
     if (!config.WHISPCORD_MCP_SECRET || !safeEqual(header, `Bearer ${config.WHISPCORD_MCP_SECRET}`)) {
       return reply.status(401).send({ error: "unauthorized" });
     }
-    const body = z.object({ type: z.enum(["guild_join", "guild_leave"]), guildId: z.string(), guildName: z.string().optional() }).parse(req.body);
+    const type = (req.body as { type?: unknown } | null)?.type;
+    if (type === "message_create") {
+      // New message in a watched server. Message text is untrusted: it only goes to the classifier.
+      const msg = IncomingMessageSchema.parse(req.body);
+      return { ok: true, queued: live?.ingest(msg) ?? false };
+    }
+    const body = GuildEventSchema.parse(req.body);
     if (body.type === "guild_leave") {
       const server = await store.getServerByGuildId(body.guildId);
-      if (server) await store.updateServer(body.guildId, { status: "disconnected" });
+      if (server) {
+        await store.updateServer(body.guildId, { status: "disconnected" });
+        await live?.refresh();
+      }
     }
     return { ok: true };
   });

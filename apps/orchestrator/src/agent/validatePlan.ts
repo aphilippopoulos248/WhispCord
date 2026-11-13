@@ -1,6 +1,7 @@
 import {
   PlanSchema,
   findPlaceholders,
+  isDestructiveCall,
   isPlannable,
   toolSpec,
   type Plan,
@@ -73,12 +74,13 @@ export async function validatePlan(
     seen.set(step.id, { creates: Boolean(spec?.creates) });
     if (!spec) continue;
     if (spec.creates) creations++;
-    if (spec.tier === "destructive") deletions++;
+    const destructive = isDestructiveCall(step.tool, step.args);
+    if (destructive) deletions++;
     steps.push({
       ...step,
       tier: spec.tier,
       group: spec.group,
-      destructive: spec.tier === "destructive",
+      destructive,
       undoable: Boolean(spec.creates) || UNDOABLE_EDITS.has(step.tool),
       dependsOn: [...dependsOn],
     });

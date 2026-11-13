@@ -1,6 +1,8 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   P,
+  isAutoDeleteWatch,
+  isDestructiveCall,
   isSubset,
   isToolAllowed,
   parsePermissions,
@@ -47,6 +49,15 @@ export interface GatewayCallLog {
   createdType: CreatedObjectType | null;
 }
 
+/**
+ * A tool that runs inside the orchestrator (live watches) instead of discord-mcp. Its handler is
+ * built for one server, so it can only ever act on the run's guild.
+ */
+export interface LocalTool {
+  def: McpToolDef;
+  run(args: Record<string, string>): Promise<ToolCallResult>;
+}
+
 export interface GatewayOptions {
   mcp: DiscordMcp;
   internal: WhispcordInternal;
@@ -67,6 +78,8 @@ export interface GatewayOptions {
    */
   undoMode?: boolean;
   onCall?: (log: GatewayCallLog) => void | Promise<void>;
+  /** Orchestrator-local tools. Only names marked `local` in TOOL_SPECS are accepted. */
+  localTools?: LocalTool[];
 }
 
 const GUILD_ARG = "guildId";
@@ -95,6 +108,7 @@ const hasPlaceholder = (v: string) => /\{\{.*\}\}/.test(v);
 export class GuildGateway {
   readonly guildId: string;
   private readonly defs: Map<string, McpToolDef>;
+  private readonly local = new Map<string, LocalTool>();
   private readonly created = new Map<CreatedObjectType, Set<string>>();
   private readonly memberCache = new Map<string, boolean>();
   private counts = { calls: 0, creations: 0, deletions: 0 };
@@ -109,7 +123,13 @@ export class GuildGateway {
       throw new GatewayError("Snapshot does not belong to this guild", "foreign_id");
     }
     this.guildId = opts.guildId;
-    this.defs = new Map(opts.toolDefs.map((d) => [d.name, d]));
+    // A discord-mcp tool can never stand in for a local one: local names come only from localTools.
+    this.defs = new Map(opts.toolDefs.filter((d) => !toolSpec(d.name)?.local).map((d) => [d.name, d]));
+    for (const t of opts.localTools ?? []) {
+      if (!toolSpec(t.def.name)?.local) continue;
+      this.defs.set(t.def.name, t.def);
+      this.local.set(t.def.name, t);
+    }
     this.destructiveConfirmed = opts.destructiveConfirmed ?? false;
     this.tiers = opts.undoMode && !opts.enabledTiers.includes("destructive")
       ? [...opts.enabledTiers, "destructive"]
@@ -201,7 +221,11 @@ export class GuildGateway {
       }
     }
 
-    if (spec.tier === "destructive") {
+    if (isAutoDeleteWatch(tool, args) && !this.tiers.includes("destructive")) {
+      throw new GatewayError("A watch that deletes messages needs Deletions switched on in Settings.", "tool_blocked");
+    }
+
+    if (isDestructiveCall(tool, args)) {
       if (this.opts.undoMode) {
         const target = DELETE_TARGET[tool];
         const id = target ? args[target[1]] : undefined;
@@ -240,7 +264,7 @@ export class GuildGateway {
     let args: Record<string, string> = {};
     try {
       args = await this.validate(tool, rawArgs);
-      this.enforceLimits(tool);
+      this.enforceLimits(tool, args);
     } catch (err) {
       await this.opts.onCall?.({
         tool, args: Object.fromEntries(Object.entries(rawArgs ?? {}).map(([k, v]) => [k, String(v)])),
@@ -250,16 +274,17 @@ export class GuildGateway {
     }
 
     const def = this.defs.get(tool)!;
+    const localTool = this.local.get(tool);
     const finalArgs: Record<string, string> = { ...args };
-    if (def.inputSchema.properties && GUILD_ARG in def.inputSchema.properties) finalArgs[GUILD_ARG] = this.guildId;
+    if (!localTool && def.inputSchema.properties && GUILD_ARG in def.inputSchema.properties) finalArgs[GUILD_ARG] = this.guildId;
 
     this.counts.calls++;
     if (spec?.creates) this.counts.creations++;
-    if (spec?.tier === "destructive") this.counts.deletions++;
+    if (isDestructiveCall(tool, args)) this.counts.deletions++;
 
     let result: ToolCallResult;
     try {
-      result = await this.opts.mcp.callTool(tool, finalArgs);
+      result = localTool ? await localTool.run(finalArgs) : await this.opts.mcp.callTool(tool, finalArgs);
     } catch (err) {
       result = { text: (err as Error).message, isError: true };
     }
@@ -278,7 +303,7 @@ export class GuildGateway {
     return { ...result, createdId };
   }
 
-  private enforceLimits(tool: string): void {
+  private enforceLimits(tool: string, args: Record<string, string>): void {
     const spec = toolSpec(tool)!;
     const { limits } = this.opts;
     if (this.counts.calls + 1 > limits.maxToolCalls) {
@@ -287,7 +312,7 @@ export class GuildGateway {
     if (spec.creates && this.counts.creations + 1 > limits.maxCreations) {
       throw new GatewayError(`This run hit the limit of ${limits.maxCreations} new objects.`, "limit");
     }
-    if (spec.tier === "destructive" && this.counts.deletions + 1 > limits.maxDeletions) {
+    if (isDestructiveCall(tool, args) && this.counts.deletions + 1 > limits.maxDeletions) {
       throw new GatewayError(`This run hit the limit of ${limits.maxDeletions} deletions.`, "limit");
     }
   }

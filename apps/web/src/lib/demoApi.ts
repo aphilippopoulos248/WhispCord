@@ -2,6 +2,7 @@
 
 import type { MessageFinding, MessageSearchStats, RunEvent, RunStatus, ValidatedPlan, ValidatedStep } from "@whispcord/shared";
 import { demoRuns, demoSnapshot } from "./demoData";
+import { demoWatchApi } from "./demoWatch";
 
 /**
  * Simulated orchestrator for demo mode. Keeps state in memory in the browser tab and plays back
@@ -221,6 +222,8 @@ export async function demoApi<T>(path: string, init: { method?: string; body?: u
     return { runId: run.id } as T;
   }
   if (path === "/connect/start") throw new Error("Connecting a real server is disabled in demo mode.");
+  const watch = demoWatchApi(path);
+  if (watch !== undefined) return watch as T;
 
   if ((m = path.match(/^\/runs\/([\w-]+)(?:\/(\w+))?$/))) {
     const run = runs.get(m[1]!);

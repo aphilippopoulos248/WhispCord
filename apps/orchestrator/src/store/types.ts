@@ -1,6 +1,8 @@
 import type {
   ActionStatus,
   CreatedObjectType,
+  LiveFlag,
+  LiveWatch,
   MessageFinding,
   MessageSearchStats,
   RunStatus,
@@ -102,6 +104,17 @@ export interface RunAction {
   durationMs: number | null;
 }
 
+export interface NewWatch {
+  serverId: string;
+  runId: string | null;
+  createdBy: string;
+  /** Discord user ID of the creator, for the live permission check before each auto-delete. */
+  createdByDiscordId: string;
+  criteria: string;
+  channelIds: string[];
+  autoDelete: boolean;
+}
+
 export interface Store {
   getProfileByAuthUser(authUserId: string): Promise<Profile | null>;
   setManageableGuilds(profileId: string, guilds: ManageableGuild[]): Promise<void>;
@@ -136,6 +149,23 @@ export interface Store {
   listActions(runId: string): Promise<RunAction[]>;
 
   recordUsage(profileId: string, delta: { runs?: number; actions?: number; tokens?: number }): Promise<void>;
+
+  // ---- live watches ----
+  createWatch(input: NewWatch): Promise<LiveWatch>;
+  getWatch(id: string): Promise<LiveWatch | null>;
+  /** Newest first. */
+  listWatches(serverId: string, limit?: number): Promise<LiveWatch[]>;
+  /** Active watches on every server (to rebuild the live-watch cache at boot). */
+  listActiveWatches(): Promise<LiveWatch[]>;
+  stopWatch(id: string): Promise<void>;
+  /** Returns null when this watch already flagged this message. */
+  insertFlag(input: Omit<LiveFlag, "id" | "flaggedAt">): Promise<LiveFlag | null>;
+  getFlag(id: string): Promise<LiveFlag | null>;
+  updateFlag(id: string, patch: Pick<LiveFlag, "action"> & Partial<Pick<LiveFlag, "actionError">>): Promise<LiveFlag | null>;
+  /** Newest first. */
+  listFlags(serverId: string, limit: number): Promise<LiveFlag[]>;
+  /** Deletes flags (they hold message excerpts) flagged before `before`. Returns how many. */
+  purgeFlagsBefore(before: Date): Promise<number>;
 
   // ---- maintenance & data deletion ----
   listConnectedServers(): Promise<Server[]>;

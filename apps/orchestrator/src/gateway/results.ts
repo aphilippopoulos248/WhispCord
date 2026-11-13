@@ -6,6 +6,9 @@ export function extractCreatedId(tool: string, text: string): string | null {
   if (tool === "create_webhook") {
     return text.match(/\/webhooks\/(\d{17,20})\//)?.[1] ?? null;
   }
+  if (tool === "start_live_watch") {
+    return text.match(/\(Watch ID: ([0-9a-f-]{36})\)/)?.[1] ?? null;
+  }
   if (tool === "create_invite") {
     return text.match(/discord\.gg\/([A-Za-z0-9-]+)/)?.[1] ?? null;
   }

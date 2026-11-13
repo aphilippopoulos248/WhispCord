@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { buildApp, supabaseTokenVerifier } from "./app.js";
 import { loadConfig } from "./config.js";
 import { Maintenance } from "./jobs.js";
+import { LiveWatchService } from "./live/watchService.js";
 import { McpDiscordClient, WhispcordInternal } from "./mcp/client.js";
 import { RunEvents } from "./runs/events.js";
 import { RunService } from "./runs/service.js";
@@ -19,13 +20,15 @@ const mcp = new McpDiscordClient(config.DISCORD_MCP_URL, config.WHISPCORD_MCP_SE
 const internal = new WhispcordInternal(mcp);
 const events = new RunEvents();
 const anthropic = config.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: config.ANTHROPIC_API_KEY }) : null;
+const live = new LiveWatchService({ store, mcp, internal, anthropic, config, log: { info: (m) => app.log.info(m), warn: (m) => app.log.warn(m) } });
 
 const app = await buildApp({
   config,
   store,
   internal,
   events,
-  runs: new RunService({ store, mcp, internal, anthropic, events, config, log: (m, e) => app.log.error({ err: e }, m) }),
+  live,
+  runs: new RunService({ store, mcp, internal, anthropic, events, config, live, log: (m, e) => app.log.error({ err: e }, m) }),
   verifyToken: supabaseTokenVerifier(store.db),
 });
 
@@ -51,12 +54,16 @@ const maintenance = new Maintenance(store, internal, config, {
 });
 maintenance.start();
 
+// Tells discord-mcp which servers have live watches, then re-syncs every minute.
+await live.start().catch((err: Error) => app.log.warn(`Live watch couldn't start yet: ${err.message}`));
+
 await app.listen({ port: config.PORT, host: config.HOST });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, async () => {
     app.log.info(`${signal} received, shutting down`);
     maintenance.stop();
+    live.stop();
     await app.close();
     process.exit(0);
   });

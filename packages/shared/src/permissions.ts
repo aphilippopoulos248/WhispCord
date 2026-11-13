@@ -11,6 +11,7 @@ export const P = {
   MANAGE_GUILD: 1n << 5n,
   VIEW_CHANNEL: 1n << 10n,
   SEND_MESSAGES: 1n << 11n,
+  MANAGE_MESSAGES: 1n << 13n,
   READ_MESSAGE_HISTORY: 1n << 16n,
   MANAGE_NICKNAMES: 1n << 27n,
   MANAGE_ROLES: 1n << 28n,
@@ -45,6 +46,12 @@ export const MODERATION_PERMISSIONS = or(
   P.MANAGE_NICKNAMES,
   P.MODERATE_MEMBERS,
 );
+
+/**
+ * Moderation plus Manage Messages, so the bot can delete members' messages. Requested only when a
+ * server allows live watches to auto-delete (Live watch + Deletions both on).
+ */
+export const MESSAGE_MODERATION_PERMISSIONS = or(MODERATION_PERMISSIONS, P.MANAGE_MESSAGES);
 
 export function parsePermissions(raw: string | number | bigint | null | undefined): bigint {
   if (raw === null || raw === undefined || raw === "") return 0n;

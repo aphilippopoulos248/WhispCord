@@ -8,6 +8,7 @@ import { RunThread } from "./RunThread";
 import { ServerIcon } from "./ServerIcon";
 import { serverState, StatusPill } from "./StatusPill";
 import { DECK_TIERS, TierPips } from "./TierPips";
+import { FlagToast, WatchPanel, useWatchFeed } from "./WatchPanel";
 
 export interface ServerInfo {
   id: string;
@@ -33,9 +34,12 @@ const PRESETS: Array<[label: string, prompt: string]> = [
   ["Staff area", "Add a staff-only area that only Moderators can see"],
   ["Game roles", "Create roles for Valorant, Minecraft and Fortnite players with matching colours"],
   ["Scan messages", "Find hateful or harassing messages from the last 7 days"],
+  ["Live watch", "Catch any hurtful or harassing messages from now on and flag them"],
 ];
+const WATCH_PROMPT = PRESETS[4]![1];
 
-type Tab = "workspace" | "history" | "settings";
+type Tab = "workspace" | "watch" | "history" | "settings";
+const TABS: Tab[] = ["workspace", "watch", "history", "settings"];
 const ACTIVE_STATUSES = ["planning", "needs_input", "awaiting_approval", "running"];
 
 export function Workspace(props: {
@@ -59,6 +63,26 @@ export function Workspace(props: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const connected = server.status === "connected";
+  const feed = useWatchFeed(server.guild_id);
+  const [toast, setToast] = useState<typeof feed.latest>(null);
+  const [unseen, setUnseen] = useState(0);
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+
+  // A new flag pops up (and counts on the WATCH key) unless you're already looking at the log.
+  useEffect(() => {
+    if (!feed.latest || tabRef.current === "watch") return;
+    setToast(feed.latest);
+    setUnseen((n) => n + 1);
+  }, [feed.latest]);
+  useEffect(() => {
+    if (tab === "watch") {
+      setUnseen(0);
+      setToast(null);
+    }
+  }, [tab]);
+  const closeToast = useCallback(() => setToast(null), []);
+  const channelName = useCallback((id: string) => snapshot?.channels.find((c) => c.id === id)?.name ?? null, [snapshot]);
 
   const refreshMirror = useCallback(async () => {
     try {
@@ -132,10 +156,19 @@ export function Workspace(props: {
           </div>
           <StatusPill status={server.status} roleOk={botRoleOk} />
           <nav className="flex w-full gap-1.5 rounded-xl border border-line bg-well p-1.5 sm:ml-auto sm:w-auto" aria-label="Panel">
-            {(["workspace", "history", "settings"] as Tab[]).map((t) => (
-              <button key={t} className="mode-key flex-1 sm:flex-none" aria-pressed={tab === t} onClick={() => setTab(t)}>
-                <span className={`led led-sm ${tab === t ? "led-accent" : ""}`} aria-hidden />
+            {TABS.map((t) => (
+              <button key={t} className="mode-key relative flex-1 sm:flex-none" aria-pressed={tab === t} onClick={() => setTab(t)}>
+                <span
+                  className={`led led-sm ${tab === t ? "led-accent" : t === "watch" && unseen > 0 ? "led-danger" : t === "watch" && feed.watches.some((w) => w.status === "active") && tiers.includes("live_watch") ? "led-ok" : ""}`}
+                  aria-hidden
+                />
                 {t}
+                {t === "watch" && unseen > 0 && (
+                  <span className="absolute -right-1.5 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-danger px-1 text-[9px] text-white">
+                    {unseen > 9 ? "9+" : unseen}
+                    <span className="sr-only"> new flags</span>
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -211,10 +244,25 @@ export function Workspace(props: {
           </div>
         )}
 
+        {tab === "watch" && (
+          <WatchPanel
+            feed={feed}
+            enabled={tiers.includes("live_watch")}
+            connected={connected}
+            channelName={channelName}
+            onPlan={(p) => void startRun(p)}
+            onSetUp={() => {
+              setPrompt(WATCH_PROMPT);
+              setTab("workspace");
+            }}
+          />
+        )}
+
         {tab === "history" && <History runs={runs} serverName={server.name} onOpen={openRun} />}
 
         {tab === "settings" && <Settings server={server} isOwner={props.isOwner} tiers={tiers} setTiers={setTiers} />}
       </section>
+      <FlagToast flag={toast} onClose={closeToast} onView={() => setTab("watch")} />
     </div>
   );
 }
@@ -395,6 +443,10 @@ const TIER_LABELS: Record<string, [string, string]> = {
     "Message search",
     "Find messages that match a description, like “hateful messages this week”. Recent message text is sent to Anthropic (Claude) to check it; matches are kept in run history for 30 days. Needs Discord’s Message Content intent.",
   ],
+  live_watch: [
+    "Live watch",
+    "Watch new messages as they’re posted and flag the ones that match, like “hurtful messages”. While a watch runs, every new message in its channels is sent to Anthropic (Claude) to check it; flags are kept for 30 days. A watch can auto-delete high-severity matches only if Deletions is on and you type DELETE when approving it. Tell your members in your server rules. Needs Discord’s Message Content intent.",
+  ],
 };
 
 const MODULE_CAPTIONS: Record<string, string> = {
@@ -403,6 +455,7 @@ const MODULE_CAPTIONS: Record<string, string> = {
   moderate: "Roles, timeouts, kicks, bans",
   messaging: "Send, edit, react",
   message_search: "Checks message text with Claude",
+  live_watch: "Flags new messages as they arrive",
 };
 
 function Settings({ server, isOwner, tiers, setTiers }: {
@@ -473,7 +526,7 @@ function Settings({ server, isOwner, tiers, setTiers }: {
         </div>
         {!isOwner && <p className="text-sm text-muted">Only the person who connected this server can change these.</p>}
 
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 2xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 2xl:grid-cols-7">
           {DECK_TIERS.filter((d) => USER_TOGGLEABLE_TIERS.includes(d.tier)).map((d) => {
             const on = tiers.includes(d.tier);
             const guarded = d.tier === "destructive";

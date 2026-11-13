@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { DEFAULT_ENABLED_TIERS } from "@whispcord/shared";
-import type { ConnectAttempt, Profile, Run, RunAction, Server, Store } from "./types.js";
+import { DEFAULT_ENABLED_TIERS, type LiveFlag, type LiveWatch } from "@whispcord/shared";
+import type { ConnectAttempt, NewWatch, Profile, Run, RunAction, Server, Store } from "./types.js";
 
 /** In-memory store for the CLI, local experiments and tests. */
 export class MemoryStore implements Store {
@@ -10,6 +10,8 @@ export class MemoryStore implements Store {
   attempts = new Map<string, ConnectAttempt>();
   runs = new Map<string, Run>();
   actions = new Map<string, RunAction>();
+  watches = new Map<string, LiveWatch>();
+  flags = new Map<string, LiveFlag>();
 
   addProfile(p: Profile & { authUserId: string }) {
     this.profiles.set(p.id, p);
@@ -125,6 +127,57 @@ export class MemoryStore implements Store {
 
   async recordUsage() {}
 
+  async createWatch(input: NewWatch) {
+    const w: LiveWatch = { ...input, id: randomUUID(), status: "active", createdAt: new Date().toISOString(), stoppedAt: null };
+    this.watches.set(w.id, w);
+    return { ...w };
+  }
+  async getWatch(id: string) {
+    const w = this.watches.get(id);
+    return w ? { ...w } : null;
+  }
+  async listWatches(serverId: string, limit = 20) {
+    return [...this.watches.values()].filter((w) => w.serverId === serverId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit).map((w) => ({ ...w }));
+  }
+  async listActiveWatches() {
+    return [...this.watches.values()].filter((w) => w.status === "active").map((w) => ({ ...w }));
+  }
+  async stopWatch(id: string) {
+    const w = this.watches.get(id);
+    if (w && w.status === "active") Object.assign(w, { status: "stopped", stoppedAt: new Date().toISOString() });
+  }
+  async insertFlag(input: Omit<LiveFlag, "id" | "flaggedAt">) {
+    if ([...this.flags.values()].some((f) => f.watchId === input.watchId && f.messageId === input.messageId)) return null;
+    const f: LiveFlag = { ...input, id: randomUUID(), flaggedAt: new Date().toISOString() };
+    this.flags.set(f.id, f);
+    return { ...f };
+  }
+  async getFlag(id: string) {
+    const f = this.flags.get(id);
+    return f ? { ...f } : null;
+  }
+  async updateFlag(id: string, patch: Pick<LiveFlag, "action"> & Partial<Pick<LiveFlag, "actionError">>) {
+    const f = this.flags.get(id);
+    if (!f) return null;
+    Object.assign(f, patch);
+    return { ...f };
+  }
+  async listFlags(serverId: string, limit: number) {
+    return [...this.flags.values()].filter((f) => f.serverId === serverId)
+      .sort((a, b) => b.flaggedAt.localeCompare(a.flaggedAt)).slice(0, limit).map((f) => ({ ...f }));
+  }
+  async purgeFlagsBefore(before: Date) {
+    let n = 0;
+    for (const [id, f] of this.flags) {
+      if (new Date(f.flaggedAt) < before) {
+        this.flags.delete(id);
+        n++;
+      }
+    }
+    return n;
+  }
+
   async listConnectedServers() {
     return [...this.servers.values()].filter((s) => s.status === "connected");
   }
@@ -167,6 +220,11 @@ export class MemoryStore implements Store {
       }
     }
     for (const [id, r] of this.runs) if (r.profileId === profileId) this.deleteRun(id);
+    for (const [id, w] of this.watches) {
+      if (w.createdBy !== profileId) continue;
+      this.watches.delete(id);
+      for (const [fid, f] of this.flags) if (f.watchId === id) this.flags.delete(fid);
+    }
     for (const key of this.members) if (key.endsWith(`:${profileId}`)) this.members.delete(key);
     for (const [state, a] of this.attempts) if (a.profileId === profileId) this.attempts.delete(state);
     this.profiles.delete(profileId);
@@ -178,6 +236,8 @@ export class MemoryStore implements Store {
   }
   private deleteServer(serverId: string) {
     for (const [id, r] of this.runs) if (r.serverId === serverId) this.deleteRun(id);
+    for (const [id, w] of this.watches) if (w.serverId === serverId) this.watches.delete(id);
+    for (const [id, f] of this.flags) if (f.serverId === serverId) this.flags.delete(id);
     for (const key of this.members) if (key.startsWith(`${serverId}:`)) this.members.delete(key);
   }
 }

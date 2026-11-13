@@ -153,8 +153,13 @@ export async function findMessages(deps: MessageFinderDeps, rawInput: unknown): 
   };
 }
 
-async function classifyBatch(
-  deps: MessageFinderDeps,
+/**
+ * One classifier call over a batch of messages. Shared by message search and live watches.
+ * The classifier has no tools; it only labels matches. Returns false if the batch couldn't be
+ * classified (refusal, truncated output, API error).
+ */
+export async function classifyBatch(
+  deps: Pick<MessageFinderDeps, "anthropic" | "model">,
   criteria: string,
   batch: number[],
   candidates: Array<{ authorName: string; channelName: string; content: string }>,

@@ -6,6 +6,7 @@ import { answerConversation, initialConversation, runPlanner, type PlannerResult
 import { validatePlan } from "../agent/validatePlan.js";
 import type { Config } from "../config.js";
 import { GuildGateway, type GatewayLimits } from "../gateway/gateway.js";
+import type { LiveWatchService } from "../live/watchService.js";
 import type { DiscordMcp, WhispcordInternal } from "../mcp/client.js";
 import type { Profile, Run, RunMessageSearch, Server, Store } from "../store/types.js";
 import type { RunEvents } from "./events.js";
@@ -28,6 +29,8 @@ export interface RunServiceDeps {
   anthropic: Anthropic | null;
   events: RunEvents;
   config: Config;
+  /** Live watches (start/stop/list as plan tools). Optional so the CLI can run without it. */
+  live?: LiveWatchService;
   log?: (msg: string, extra?: unknown) => void;
 }
 
@@ -49,7 +52,12 @@ export class RunService {
   async buildGateway(
     server: Server,
     profile: Profile,
-    opts: { destructiveConfirmed?: boolean; undoMode?: boolean; knownCreated?: Array<{ type: CreatedObjectType; id: string }> } = {},
+    opts: {
+      destructiveConfirmed?: boolean;
+      undoMode?: boolean;
+      knownCreated?: Array<{ type: CreatedObjectType; id: string }>;
+      runId?: string;
+    } = {},
   ): Promise<GuildGateway> {
     if (server.status !== "connected") throw new HttpError(409, "This server is not connected to Whispcord.");
     const requester = await this.d.internal.memberPermissions(server.guildId, profile.discordUserId);
@@ -73,6 +81,7 @@ export class RunService {
       destructiveConfirmed: opts.destructiveConfirmed,
       undoMode: opts.undoMode,
       knownCreated: opts.knownCreated,
+      localTools: this.d.live?.localTools(server, profile, opts.runId ?? null),
     });
   }
 
@@ -252,6 +261,7 @@ export class RunService {
         destructiveConfirmed,
         undoMode: run.kind === "undo",
         knownCreated,
+        runId: run.id,
       });
       const result = await executePlan({
         runId: run.id,

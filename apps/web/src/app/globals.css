@@ -23,6 +23,7 @@
   --color-warn: #f2b44c;
   --color-danger: #f0616d;
   --color-phosphor: #9ff0c9;
+  --color-watch: #6cc7ff;
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: var(--font-bricolage), var(--font-inter), "Segoe UI", system-ui, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -577,6 +578,27 @@ h1, h2, h3 {
     height: 6px;
     border-radius: 3px;
     background: repeating-linear-gradient(-45deg, var(--color-warn) 0 8px, #2a2316 8px 16px);
+  }
+  /* A flag that just arrived in the WATCH log. */
+  .flag-fresh {
+    animation: flag-in 2.4s ease-out 1;
+  }
+  @keyframes flag-in {
+    0% {
+      background: rgb(240 97 109 / 0.22);
+    }
+    100% {
+      background: transparent;
+    }
+  }
+  .toast-in {
+    animation: toast-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  @keyframes toast-in {
+    from {
+      transform: translateY(16px);
+      opacity: 0;
+    }
   }
   .blink-cursor {
     display: inline-block;

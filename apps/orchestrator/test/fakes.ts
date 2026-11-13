@@ -89,6 +89,10 @@ export class FakeMcp implements DiscordMcp {
   botGuilds = new Set([GUILD]);
   /** Bot's permission bitfield (Builder tier by default). */
   botPermissions = "27648920593";
+  /** Permission bitfield returned for members by check_member_permissions. */
+  memberPermissions = MANAGER_PERMS;
+  /** Guilds discord-mcp was last told to forward messages for (set_live_watch_guilds). */
+  liveWatchGuilds: string[] = [];
   down = false;
   /** What scan_messages returns. */
   scanContentAvailable = true;
@@ -113,7 +117,7 @@ export class FakeMcp implements DiscordMcp {
       return {
         text: JSON.stringify({
           guildId: args.guildId, userId: args.userId, botInGuild, isMember, canManageServer,
-          canManageRoles: canManageServer, canManageChannels: canManageServer, permissions: MANAGER_PERMS, highestRolePosition: 3,
+          canManageRoles: canManageServer, canManageChannels: canManageServer, permissions: this.memberPermissions, highestRolePosition: 3,
         }),
         isError: false,
       };
@@ -130,6 +134,10 @@ export class FakeMcp implements DiscordMcp {
       };
     }
     if (name === "get_guild_snapshot") return { text: JSON.stringify(SNAPSHOT), isError: false };
+    if (name === "set_live_watch_guilds") {
+      this.liveWatchGuilds = String(args.guildIds ?? "").split(",").filter(Boolean);
+      return { text: JSON.stringify({ watching: this.liveWatchGuilds, messageContentIntent: this.scanContentAvailable }), isError: false };
+    }
     if (name === "scan_messages") {
       const max = Number(args.maxTotal ?? 1000);
       const messages = this.scanMessages.slice(0, max).map((m, i) => ({

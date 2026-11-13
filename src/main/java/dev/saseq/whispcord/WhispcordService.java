@@ -52,9 +52,11 @@ public class WhispcordService {
     );
 
     private final JDA jda;
+    private final LiveWatchRegistry liveWatches;
 
-    public WhispcordService(JDA jda) {
+    public WhispcordService(JDA jda, LiveWatchRegistry liveWatches) {
         this.jda = jda;
+        this.liveWatches = liveWatches;
     }
 
     private Guild requireGuild(String guildId) {
@@ -356,6 +358,29 @@ public class WhispcordService {
         out.put("roles", roles);
         out.put("emojis", emojis);
         out.put("events", events);
+        return Json.write(out);
+    }
+
+    /**
+     * Replaces the set of guilds whose new messages are forwarded for Whispcord live watches.
+     * Only guilds the bot is in are kept. Returns whether Discord sends message text (the
+     * Message Content intent), since watches can't check anything without it.
+     */
+    @Tool(name = "set_live_watch_guilds",
+            description = "Whispcord internal: sets which servers' new messages are forwarded for live watches")
+    public String setLiveWatchGuilds(
+            @ToolParam(description = "Comma-separated server IDs; empty stops all forwarding", required = false) String guildIds) {
+        List<String> ids = new ArrayList<>();
+        if (guildIds != null) {
+            for (String raw : guildIds.split(",")) {
+                String id = raw.trim();
+                if (!id.isEmpty() && id.matches("\\d{17,20}") && jda.getGuildById(id) != null) ids.add(id);
+            }
+        }
+        liveWatches.replace(ids);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("watching", ids);
+        out.put("messageContentIntent", jda.getGatewayIntents().contains(GatewayIntent.MESSAGE_CONTENT));
         return Json.write(out);
     }
 }

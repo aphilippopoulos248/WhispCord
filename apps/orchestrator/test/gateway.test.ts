@@ -158,3 +158,31 @@ describe("permission escalation", () => {
     expect(await code(gateway.call("create_text_channel", { name: "x", categoryId: CAT }))).toBe("ok");
   });
 });
+
+describe("orchestrator-local tools (live watches)", () => {
+  const ran: Array<Record<string, string>> = [];
+  const startDef = { name: "start_live_watch", description: "watch", inputSchema: { type: "object" as const, properties: { criteria: { type: "string" }, channelIds: { type: "string" }, autoDelete: { type: "string" } }, required: ["criteria"] } };
+  const localTools = [{ def: startDef, run: async (args: Record<string, string>) => { ran.push(args); return { text: "Live watch started (Watch ID: 00000000-0000-4000-8000-000000000001).", isError: false }; } }];
+
+  it("runs locally without a guildId argument and never reaches discord-mcp", async () => {
+    const { gateway, mcp } = makeGateway({ enabledTiers: ["read", "live_watch"], localTools });
+    const res = await gateway.call("start_live_watch", { criteria: "hurtful messages", channelIds: GENERAL });
+    expect(res.createdId).toBe("00000000-0000-4000-8000-000000000001");
+    expect(ran.at(-1)).toEqual({ criteria: "hurtful messages", channelIds: GENERAL });
+    expect(mcp.calls).toHaveLength(0);
+  });
+
+  it("applies the guild lock and tier allowlist to local tools", async () => {
+    expect(await code(makeGateway({ enabledTiers: ["read", "build"], localTools }).gateway.call("start_live_watch", { criteria: "x y z" }))).toBe("tool_blocked");
+    const { gateway } = makeGateway({ enabledTiers: ["read", "live_watch"], localTools });
+    expect(await code(gateway.call("start_live_watch", { criteria: "x y z", channelIds: OTHER_GUILD_CHANNEL }))).toBe("foreign_id");
+    expect(await code(gateway.call("start_live_watch", { criteria: "x y z", guildId: GUILD }))).toBe("foreign_id");
+  });
+
+  it("treats an auto-delete watch as a deletion: Deletions tier plus typed confirmation", async () => {
+    const autoDelete = { criteria: "hurtful messages", autoDelete: "true" };
+    expect(await code(makeGateway({ enabledTiers: ["read", "live_watch"], localTools, destructiveConfirmed: true }).gateway.call("start_live_watch", autoDelete))).toBe("tool_blocked");
+    expect(await code(makeGateway({ enabledTiers: ["read", "live_watch", "destructive"], localTools }).gateway.call("start_live_watch", autoDelete))).toBe("confirmation_required");
+    expect(await code(makeGateway({ enabledTiers: ["read", "live_watch", "destructive"], localTools, destructiveConfirmed: true }).gateway.call("start_live_watch", autoDelete))).toBe("ok");
+  });
+});

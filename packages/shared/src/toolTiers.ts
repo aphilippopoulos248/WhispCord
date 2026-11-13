@@ -2,14 +2,16 @@
  * Tool allowlist. Every discord-mcp tool Whispcord may use is listed here with its tier.
  * Anything NOT listed is blocked by default, so new upstream tools never appear silently.
  */
-export const TIERS = ["read", "build", "destructive", "moderate", "messaging", "message_search", "restricted"] as const;
+export const TIERS = ["read", "build", "destructive", "moderate", "messaging", "message_search", "live_watch", "restricted"] as const;
 export type Tier = (typeof TIERS)[number];
 
 /**
  * Tiers a server owner may toggle. `restricted` (DMs, user lookups) is never user-enabled.
  * `message_search` sends message text to Anthropic for classification, so it is off by default.
+ * `live_watch` sends every new message in watched channels to Anthropic while a watch runs, so it
+ * is off by default and separate from `message_search`.
  */
-export const USER_TOGGLEABLE_TIERS: Tier[] = ["build", "destructive", "moderate", "messaging", "message_search"];
+export const USER_TOGGLEABLE_TIERS: Tier[] = ["build", "destructive", "moderate", "messaging", "message_search", "live_watch"];
 export const DEFAULT_ENABLED_TIERS: Tier[] = ["read", "build", "destructive"];
 
 /**
@@ -28,7 +30,7 @@ export type RefKind =
   | "invite" // only codes created during this run (or undone)
   | "message"; // scoped by a validated channelId
 
-export type CreatedObjectType = "category" | "channel" | "role" | "webhook" | "event" | "invite" | "emoji";
+export type CreatedObjectType = "category" | "channel" | "role" | "webhook" | "event" | "invite" | "emoji" | "watch";
 
 export interface ToolSpec {
   tier: Tier;
@@ -45,6 +47,11 @@ export interface ToolSpec {
    * find_messages). They never appear in the action catalog and can't be plan steps.
    */
   plannable?: boolean;
+  /**
+   * Runs inside the orchestrator instead of discord-mcp (live watches). The gateway still applies
+   * the allowlist, tier and argument checks; the orchestrator's handler is scoped to the run's guild.
+   */
+  local?: boolean;
   /** UI grouping. */
   group: "server" | "category" | "channel" | "role" | "permission" | "webhook" | "event" | "invite" | "emoji" | "message" | "member" | "moderation";
 }
@@ -164,6 +171,17 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   // ---- message search (opt-in; message text goes to a tool-less classifier, never the planner) ----
   scan_messages: { tier: "message_search", group: "message", refs: { channelIds: "channelList" }, plannable: false },
 
+  // ---- live watch (opt-in; orchestrator-local tools) ----
+  // New messages in watched channels go to the same tool-less classifier as message search; the
+  // planner never sees message text. autoDelete=true makes a watch destructive: it needs the
+  // Deletions tier and typed confirmation when the plan is approved (see isDestructiveCall).
+  list_live_watches: { tier: "read", group: "moderation", local: true },
+  start_live_watch: {
+    tier: "live_watch", group: "moderation", refs: { channelIds: "channelList" }, creates: "watch", local: true,
+    inverse: del("stop_live_watch", "watchId"),
+  },
+  stop_live_watch: { tier: "live_watch", group: "moderation", local: true },
+
   // ---- moderate (opt-in) ----
   assign_role: { tier: "moderate", group: "member", refs: { userId: "member", roleId: "role" } },
   remove_role: { tier: "moderate", group: "member", refs: { userId: "member", roleId: "role" } },
@@ -197,7 +215,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
 };
 
 /** Whispcord-internal tools from the fork. The orchestrator calls these; Claude never sees them. */
-export const INTERNAL_TOOLS = ["check_member_permissions", "get_bot_status", "get_guild_snapshot"] as const;
+export const INTERNAL_TOOLS = ["check_member_permissions", "get_bot_status", "get_guild_snapshot", "set_live_watch_guilds"] as const;
 
 export function toolSpec(name: string): ToolSpec | undefined {
   return Object.prototype.hasOwnProperty.call(TOOL_SPECS, name) ? TOOL_SPECS[name] : undefined;
@@ -216,6 +234,17 @@ export function isPlannable(name: string): boolean {
 }
 
 export const isDestructive = (name: string) => toolSpec(name)?.tier === "destructive";
+
+/** True when a watch's arguments ask it to delete matching messages on its own. */
+export const isAutoDeleteWatch = (name: string, args: Record<string, unknown>) =>
+  name === "start_live_watch" && String(args.autoDelete ?? "").trim().toLowerCase() === "true";
+
+/**
+ * Does this particular call delete data? Destructive tools always do; a live watch does when it
+ * may auto-delete messages. Such calls need the Deletions tier and typed confirmation.
+ */
+export const isDestructiveCall = (name: string, args: Record<string, unknown>) =>
+  isDestructive(name) || isAutoDeleteWatch(name, args);
 export const isWrite = (name: string) => {
   const t = toolSpec(name)?.tier;
   return t !== undefined && t !== "read";

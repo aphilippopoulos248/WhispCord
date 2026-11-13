@@ -1,7 +1,8 @@
 "use client";
 
-import type { RunEvent } from "@whispcord/shared";
+import type { RunEvent, WatchEvent } from "@whispcord/shared";
 import { demoApi, demoSubscribe } from "./demoApi";
+import { demoSubscribeWatch } from "./demoWatch";
 import { isDemo } from "./demoData";
 import { createClient } from "./supabase/client";
 
@@ -35,10 +36,20 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
  */
 export function subscribeRun(runId: string, onEvent: (e: RunEvent) => void): () => void {
   if (isDemo) return demoSubscribe(runId, onEvent);
+  return stream<RunEvent>(`/runs/${runId}/events`, onEvent);
+}
+
+/** Live-watch flags for a server as they arrive. Returns an unsubscribe function. */
+export function subscribeWatch(guildId: string, onEvent: (e: WatchEvent) => void): () => void {
+  if (isDemo) return demoSubscribeWatch(guildId, onEvent);
+  return stream<WatchEvent>(`/servers/${guildId}/watch/events`, onEvent);
+}
+
+function stream<E>(path: string, onEvent: (e: E) => void): () => void {
   const controller = new AbortController();
   (async () => {
     try {
-      const res = await fetch(`${BASE}/runs/${runId}/events`, {
+      const res = await fetch(`${BASE}${path}`, {
         headers: { Authorization: `Bearer ${await token()}` },
         signal: controller.signal,
       });
@@ -56,7 +67,7 @@ export function subscribeRun(runId: string, onEvent: (e: RunEvent) => void): () 
           for (const line of chunk.split("\n")) {
             if (line.startsWith("data: ")) {
               try {
-                onEvent(JSON.parse(line.slice(6)) as RunEvent);
+                onEvent(JSON.parse(line.slice(6)) as E);
               } catch {
                 /* ignore malformed */
               }
@@ -65,7 +76,7 @@ export function subscribeRun(runId: string, onEvent: (e: RunEvent) => void): () 
         }
       }
     } catch {
-      /* aborted or network error; the UI refetches run state */
+      /* aborted or network error; the UI refetches state */
     }
   })();
   return () => controller.abort();

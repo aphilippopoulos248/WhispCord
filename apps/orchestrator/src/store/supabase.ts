@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import type { ConnectAttempt, Profile, Run, RunAction, Server, Store } from "./types.js";
+import type { LiveFlag, LiveWatch } from "@whispcord/shared";
+import type { ConnectAttempt, NewWatch, Profile, Run, RunAction, Server, Store } from "./types.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Row = Record<string, any>;
@@ -87,6 +88,39 @@ const actionToRow = (a: Partial<RunAction>): Row => {
   for (const [k, v] of Object.entries(a)) if (map[k]) row[map[k]] = v;
   return row;
 };
+
+const toWatch = (r: Row): LiveWatch => ({
+  id: r.id,
+  serverId: r.server_id,
+  runId: r.run_id,
+  createdBy: r.created_by,
+  createdByDiscordId: r.created_by_discord_id,
+  criteria: r.criteria,
+  channelIds: r.channel_ids ?? [],
+  autoDelete: r.auto_delete,
+  status: r.status,
+  createdAt: r.created_at,
+  stoppedAt: r.stopped_at,
+});
+
+const toFlag = (r: Row): LiveFlag => ({
+  id: r.id,
+  watchId: r.watch_id,
+  serverId: r.server_id,
+  messageId: r.message_id,
+  channelId: r.channel_id,
+  channelName: r.channel_name,
+  authorId: r.author_id,
+  authorName: r.author_name,
+  postedAt: r.posted_at,
+  severity: r.severity,
+  reason: r.reason,
+  excerpt: r.excerpt ?? "",
+  jumpUrl: r.jump_url,
+  action: r.action,
+  actionError: r.action_error,
+  flaggedAt: r.flagged_at,
+});
 
 function check<T>(res: { data: T; error: { message: string } | null }): T {
   if (res.error) throw new Error(`Supabase: ${res.error.message}`);
@@ -236,6 +270,67 @@ export class SupabaseStore implements Store {
   async listActions(runId: string) {
     const rows = check(await this.db.from("run_actions").select("*").eq("run_id", runId).order("step_index", { ascending: true }));
     return (rows ?? []).map(toAction);
+  }
+
+  // ---- live watches ----
+  async createWatch(input: NewWatch) {
+    const r = checkOne(
+      await this.db.from("live_watches").insert({
+        server_id: input.serverId, run_id: input.runId, created_by: input.createdBy, created_by_discord_id: input.createdByDiscordId,
+        criteria: input.criteria, channel_ids: input.channelIds, auto_delete: input.autoDelete,
+      }).select("*").single(),
+    );
+    return toWatch(r);
+  }
+
+  async getWatch(id: string) {
+    const r = check(await this.db.from("live_watches").select("*").eq("id", id).maybeSingle());
+    return r ? toWatch(r) : null;
+  }
+
+  async listWatches(serverId: string, limit = 20) {
+    const rows = check(await this.db.from("live_watches").select("*").eq("server_id", serverId).order("created_at", { ascending: false }).limit(limit));
+    return (rows ?? []).map(toWatch);
+  }
+
+  async listActiveWatches() {
+    const rows = check(await this.db.from("live_watches").select("*").eq("status", "active"));
+    return (rows ?? []).map(toWatch);
+  }
+
+  async stopWatch(id: string) {
+    check(await this.db.from("live_watches").update({ status: "stopped", stopped_at: new Date().toISOString() }).eq("id", id).eq("status", "active"));
+  }
+
+  async insertFlag(input: Omit<LiveFlag, "id" | "flaggedAt">) {
+    const res = await this.db.from("live_flags").upsert({
+      watch_id: input.watchId, server_id: input.serverId, message_id: input.messageId, channel_id: input.channelId,
+      channel_name: input.channelName, author_id: input.authorId, author_name: input.authorName, posted_at: input.postedAt,
+      severity: input.severity, reason: input.reason, excerpt: input.excerpt, jump_url: input.jumpUrl,
+      action: input.action, action_error: input.actionError,
+    }, { onConflict: "watch_id,message_id", ignoreDuplicates: true }).select("*");
+    const rows = check(res);
+    return rows && rows.length ? toFlag(rows[0]!) : null;
+  }
+
+  async getFlag(id: string) {
+    const r = check(await this.db.from("live_flags").select("*").eq("id", id).maybeSingle());
+    return r ? toFlag(r) : null;
+  }
+
+  async updateFlag(id: string, patch: Pick<LiveFlag, "action"> & Partial<Pick<LiveFlag, "actionError">>) {
+    const rows = check(await this.db.from("live_flags").update({ action: patch.action, action_error: patch.actionError ?? null }).eq("id", id).select("*"));
+    return rows && rows.length ? toFlag(rows[0]!) : null;
+  }
+
+  async listFlags(serverId: string, limit: number) {
+    const rows = check(await this.db.from("live_flags").select("*").eq("server_id", serverId).order("flagged_at", { ascending: false }).limit(limit));
+    return (rows ?? []).map(toFlag);
+  }
+
+  async purgeFlagsBefore(before: Date) {
+    const rows = check(await this.db.from("live_flags").delete().lt("flagged_at", before.toISOString()).select("id"));
+    return rows?.length ?? 0;
   }
 
   async listConnectedServers() {

@@ -7,6 +7,7 @@ export const DECK_TIERS: Array<{ tier: Tier; short: string; color: string }> = [
   { tier: "moderate", short: "MODERATE", color: "var(--color-ok)" },
   { tier: "messaging", short: "MESSAGE", color: "var(--color-warn)" },
   { tier: "message_search", short: "SEARCH", color: "var(--color-phosphor)" },
+  { tier: "live_watch", short: "WATCH", color: "var(--color-watch)" },
 ];
 
 /** A row of small bars, one per permission, lit when that permission is on. */

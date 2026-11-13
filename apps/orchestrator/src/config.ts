@@ -22,8 +22,18 @@ const EnvSchema = z.object({
   /** Message search classifier (the build plan specifies Haiku for cheap classification). */
   WHISPCORD_CLASSIFIER_MODEL: z.string().default("claude-haiku-5-5"),
   MAX_MESSAGES_SCANNED_PER_RUN: z.coerce.number().default(1000),
-  /** Message excerpts found by searches are cleared from run history after this many days. */
+  /** Message excerpts found by searches (and live-watch flags) are deleted after this many days. */
   FINDINGS_RETENTION_DAYS: z.coerce.number().default(30),
+
+  /** Live watch: how long new messages are collected before one classifier call. */
+  LIVE_WATCH_BATCH_MS: z.coerce.number().default(3000),
+  /** Live watch: most messages per batch (a full batch is classified straight away). */
+  LIVE_WATCH_BATCH_SIZE: z.coerce.number().default(40),
+  /** Live watch: most messages classified per server per hour; the rest are skipped. */
+  LIVE_WATCH_MAX_MESSAGES_PER_HOUR: z.coerce.number().default(2000),
+  /** Live watch: most automatic deletions per server per hour. */
+  LIVE_WATCH_MAX_AUTO_DELETES_PER_HOUR: z.coerce.number().default(30),
+  LIVE_WATCH_MAX_ACTIVE_PER_SERVER: z.coerce.number().default(3),
 
   SUPABASE_URL: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
