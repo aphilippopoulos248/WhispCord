@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Whispcord</title>
+  <defs>
+    <!-- Backdrop -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#262b3a"/>
+      <stop offset="1" stop-color="#0c0e12"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.45" r="0.55">
+      <stop offset="0" stop-color="#8b7cf6" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#8b7cf6" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Brushed lavender metal: light from the top left -->
+    <linearGradient id="metal" x1="0.2" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#f1efff"/>
+      <stop offset="0.35" stop-color="#bdb5f2"/>
+      <stop offset="0.75" stop-color="#7a6ce6"/>
+      <stop offset="1" stop-color="#4b3fb0"/>
+    </linearGradient>
+    <linearGradient id="metalSide" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#cfc8fa"/>
+      <stop offset="1" stop-color="#4b3fb0"/>
+    </linearGradient>
+    <linearGradient id="rimShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#2a2170" stop-opacity="0.6"/>
+    </linearGradient>
+    <radialGradient id="specular" cx="0.3" cy="0.2" r="0.5">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Glass face screen -->
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2130"/>
+      <stop offset="1" stop-color="#05070a"/>
+    </linearGradient>
+    <linearGradient id="glare" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Glowing parts -->
+    <radialGradient id="eye" cx="0.5" cy="0.4" r="0.6">
+      <stop offset="0" stop-color="#ecfff6"/>
+      <stop offset="0.45" stop-color="#9ff0c9"/>
+      <stop offset="1" stop-color="#3ccf91"/>
+    </radialGradient>
+    <radialGradient id="bulb" cx="0.38" cy="0.32" r="0.7">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.35" stop-color="#9ff0c9"/>
+      <stop offset="1" stop-color="#2a9e6c"/>
+    </radialGradient>
+
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <filter id="inner" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  </defs>
+
+  <!-- Backdrop (rounded square; Discord crops to a circle and the robot stays inside it) -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="112" fill="url(#halo)"/>
+
+  <!-- Contact shadow -->
+  <ellipse cx="256" cy="420" rx="150" ry="22" fill="#000" opacity="0.55" filter="url(#soft)"/>
+
+  <!-- Antenna -->
+  <rect x="246" y="96" width="20" height="52" rx="10" fill="url(#metalSide)"/>
+  <circle cx="256" cy="86" r="30" fill="#9ff0c9" opacity="0.45" filter="url(#soft)"/>
+  <circle cx="256" cy="86" r="20" fill="url(#bulb)"/>
+  <ellipse cx="249" cy="78" rx="7" ry="5" fill="#fff" opacity="0.9"/>
+
+  <!-- Ears -->
+  <rect x="72" y="226" width="48" height="108" rx="22" fill="url(#metalSide)"/>
+  <rect x="392" y="226" width="48" height="108" rx="22" fill="url(#metalSide)"/>
+  <rect x="80" y="236" width="14" height="88" rx="7" fill="#fff" opacity="0.35"/>
+  <rect x="400" y="236" width="14" height="88" rx="7" fill="#fff" opacity="0.25"/>
+
+  <!-- Head -->
+  <rect x="104" y="136" width="304" height="268" rx="92" fill="url(#metal)"/>
+  <rect x="104" y="136" width="304" height="268" rx="92" fill="url(#specular)"/>
+  <rect x="106" y="138" width="300" height="264" rx="90" fill="none" stroke="url(#rimShade)" stroke-width="4"/>
+
+  <!-- Face screen: recessed glass -->
+  <rect x="140" y="186" width="232" height="170" rx="62" fill="#1a1450" opacity="0.6" filter="url(#inner)"/>
+  <rect x="146" y="190" width="220" height="160" rx="58" fill="url(#glass)"/>
+  <rect x="146" y="190" width="220" height="160" rx="58" fill="none" stroke="#000" stroke-opacity="0.6" stroke-width="6"/>
+
+  <!-- Eyes -->
+  <g filter="url(#glow)">
+    <rect x="190" y="228" width="36" height="48" rx="18" fill="url(#eye)"/>
+    <rect x="286" y="228" width="36" height="48" rx="18" fill="url(#eye)"/>
+  </g>
+
+  <!-- Mouth: whisper sound bars, fading out to the right -->
+  <g stroke="#c4bbff" stroke-width="10" stroke-linecap="round" filter="url(#glow)">
+    <line x1="220" y1="306" x2="220" y2="322" stroke-opacity="0.5"/>
+    <line x1="238" y1="300" x2="238" y2="328"/>
+    <line x1="256" y1="296" x2="256" y2="332"/>
+    <line x1="274" y1="302" x2="274" y2="326" stroke-opacity="0.75"/>
+    <line x1="292" y1="308" x2="292" y2="320" stroke-opacity="0.45"/>
+  </g>
+
+  <!-- Glass glare -->
+  <path d="M176 196 H300 Q232 214 168 270 Q160 230 176 196 Z" fill="url(#glare)"/>
+</svg>

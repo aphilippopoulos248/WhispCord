@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, Inter, JetBrains_Mono } from "next/font/google";
 import Link from "next/link";
+import { WhispcordLogo } from "@/components/WhispcordLogo";
 import { isDemo } from "@/lib/demoData";
 import { createClient } from "@/lib/supabase/server";
 import "./globals.css";
@@ -27,12 +28,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <header>
           <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4">
             <Link href="/" className="flex items-center gap-2.5 font-display text-xl font-extrabold tracking-tight">
-              <span
-                className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-base text-ink shadow-[0_0_18px_rgb(139_124_246/0.5)]"
-                aria-hidden
-              >
-                W
-              </span>
+              <WhispcordLogo className="h-8 w-8 rounded-lg shadow-[0_0_18px_rgb(139_124_246/0.5)]" />
               Whispcord
             </Link>
             <nav className="flex items-center gap-3">
