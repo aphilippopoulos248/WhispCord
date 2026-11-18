@@ -46,18 +46,19 @@ The CLI prints the plan, asks for approval, runs the plan through the gateway, a
 
 ## 4. Deploy
 
-- **Web:** Vercel (`apps/web`). Set the `NEXT_PUBLIC_*` variables.
-- **Backend:** Railway (below), or `infra/docker-compose.yml` on Fly.io or a VPS. Only the orchestrator gets a public HTTPS endpoint. discord-mcp stays on the private network, with `WHISPCORD_MCP_SECRET` set.
+- **Everything on Railway** (below): three services from this repo. Or run the backend from `infra/docker-compose.yml` on Fly.io or a VPS and the web app anywhere that builds `apps/web/Dockerfile`.
+- Only the web app and the orchestrator get public HTTPS endpoints. discord-mcp stays on the private network, with `WHISPCORD_MCP_SECRET` set.
 - Before going public, work through the checklist in [`discord-policies.md`](./discord-policies.md).
 
-### Backend on Railway
+### Railway
 
-Two services from this GitHub repo, configured by `railway/discord-mcp.json` and `railway/orchestrator.json`. Both are built from the repo root with their Dockerfiles. Keep each at **one replica**: discord-mcp holds the bot's Discord connection, and the orchestrator keeps live-watch batches and browser streams in memory.
+Three services from this GitHub repo, configured by `railway/discord-mcp.json`, `railway/orchestrator.json` and `railway/web.json`. All are built from the repo root with their Dockerfiles. Keep each at **one replica**: discord-mcp holds the bot's Discord connection, and the orchestrator keeps live-watch batches and browser streams in memory.
 
-1. **Project:** in Railway, create a project, then add **two services from the GitHub repo**. Name them exactly `discord-mcp` and `orchestrator`. The variable references below use these names.
-2. **Config file:** for each service, open Settings, set **Config-as-code → Railway config file** to `/railway/discord-mcp.json` or `/railway/orchestrator.json`, and turn on **Wait for CI**. Pushes to `main` then deploy only after CI passes.
-3. **Shared variable:** in Project Settings → Shared Variables, add `WHISPCORD_MCP_SECRET`, a long random string (for example `openssl rand -hex 32`).
-4. **discord-mcp variables:**
+1. **Project:** in Railway, create a project, then add **three services from the GitHub repo**. Name them exactly `discord-mcp`, `orchestrator` and `web`. The variable references below use these names.
+2. **Config file:** for each service, open Settings, set **Config-as-code → Railway config file** to `/railway/discord-mcp.json`, `/railway/orchestrator.json` or `/railway/web.json`, and turn on **Wait for CI**. Pushes to `main` then deploy only after CI passes.
+3. **Domains first:** in Settings → Networking, **generate a domain** for `orchestrator` (port 8787) and for `web` (port 3000), or add your own (like `api.yourdomain.com` and `yourdomain.com`). The variables below reference them. **Do not generate a domain** for discord-mcp.
+4. **Shared variable:** in Project Settings → Shared Variables, add `WHISPCORD_MCP_SECRET`, a long random string (for example `openssl rand -hex 32`).
+5. **discord-mcp variables:**
 
    ```
    SPRING_PROFILES_ACTIVE=http
@@ -70,28 +71,38 @@ Two services from this GitHub repo, configured by `railway/discord-mcp.json` and
    JAVA_TOOL_OPTIONS=-Xmx512m
    ```
 
-   **Do not generate a public domain** for discord-mcp. `SERVER_ADDRESS=::` makes it listen on Railway's private network.
-5. **orchestrator variables:**
+   `SERVER_ADDRESS=::` makes it listen on Railway's private network.
+6. **orchestrator variables:**
 
    ```
    HOST=::
    PORT=8787
-   WEB_ORIGIN=https://<your-site>.vercel.app
+   WEB_ORIGIN=https://${{web.RAILWAY_PUBLIC_DOMAIN}}
    DISCORD_MCP_URL=http://${{discord-mcp.RAILWAY_PRIVATE_DOMAIN}}:8085/mcp
    WHISPCORD_MCP_SECRET=${{shared.WHISPCORD_MCP_SECRET}}
    DISCORD_CLIENT_ID=<application id>
-   DISCORD_BOT_REDIRECT_URI=https://<your-site>.vercel.app/connect/callback
+   DISCORD_BOT_REDIRECT_URI=https://${{web.RAILWAY_PUBLIC_DOMAIN}}/connect/callback
    ANTHROPIC_API_KEY=<key>
    SUPABASE_URL=<project url>
    SUPABASE_SERVICE_ROLE_KEY=<service role key>
    ```
 
-   Optional: `WHISPCORD_PLANNER_MODEL`, `LIVE_WATCH_*` and the other limits in `.env.example`. Then, in Settings → Networking, **generate a domain** on port 8787 (or add your own, like `api.yourdomain.com`).
-6. **Vercel:** set `NEXT_PUBLIC_ORCHESTRATOR_URL` to the orchestrator's domain and `NEXT_PUBLIC_SITE_URL` to the site's URL, then redeploy.
-7. **Discord and Supabase:**
-   - Discord Developer Portal → OAuth2: add `https://<your-site>.vercel.app/connect/callback` as a redirect.
-   - Supabase → Authentication → URL Configuration: set the Site URL and add the redirect URL.
+   Optional: `WHISPCORD_PLANNER_MODEL`, `LIVE_WATCH_*` and the other limits in `.env.example`.
+7. **web variables:**
+
+   ```
+   PORT=3000
+   NEXT_PUBLIC_SUPABASE_URL=<project url>
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
+   NEXT_PUBLIC_ORCHESTRATOR_URL=https://${{orchestrator.RAILWAY_PUBLIC_DOMAIN}}
+   NEXT_PUBLIC_SITE_URL=https://${{web.RAILWAY_PUBLIC_DOMAIN}}
+   ```
+
+   These are **baked in at build time** (the Dockerfile declares them as build args, and Railway passes matching service variables through). Changing one needs a **redeploy**, not just a restart. They ship to the browser, so never put a secret here (the anon key is meant to be public; the service role key is not). The build fails early if the Supabase pair is missing.
+8. **Discord and Supabase:**
+   - Discord Developer Portal → OAuth2: add `https://<web-domain>/connect/callback` as a redirect.
+   - Supabase → Authentication → URL Configuration: set the Site URL to `https://<web-domain>` and add `https://<web-domain>/auth/callback` to the redirect URLs.
    - Apply every migration in `supabase/migrations`.
-8. **Check:** `https://<orchestrator-domain>/health` returns `{"ok":true,"discordMcp":"up"}`. Railway's deploy check uses `/livez`, which only confirms the process is up, so a bot restart doesn't fail an orchestrator deploy.
+9. **Check:** `https://<orchestrator-domain>/health` returns `{"ok":true,"discordMcp":"up"}`, and `https://<web-domain>` loads and "Continue with Discord" signs you in. Railway's deploy checks use `/livez` (orchestrator) and `/` (web), which only confirm the process is up, so a bot restart doesn't fail a deploy.
 
 Size: discord-mcp is capped at a 512 MB heap (about 700 MB in total); the orchestrator uses about 150 MB.

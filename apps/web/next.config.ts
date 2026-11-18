@@ -31,6 +31,12 @@ const nextConfig: NextConfig = {
   // The shared workspace package ships TypeScript source.
   transpilePackages: ["@whispcord/shared"],
   env: publicEnv,
+  // Docker/Railway build (apps/web/Dockerfile sets WHISPCORD_STANDALONE=1): emit a self-contained
+  // server in .next/standalone. Tracing starts at the repo root so workspace packages are included.
+  // Left off locally so `next start` keeps working.
+  ...(process.env.WHISPCORD_STANDALONE === "1"
+    ? { output: "standalone" as const, outputFileTracingRoot: path.resolve(process.cwd(), "../..") }
+    : {}),
 };
 
 export default nextConfig;
