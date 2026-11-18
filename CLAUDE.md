@@ -11,9 +11,9 @@ Whispcord lets a Discord server owner manage their server in plain English. A Cl
 | Path | What |
 | --- | --- |
 | `src/main/java/dev/saseq/**` | Upstream discord-mcp (Java 17, Spring Boot 4, Spring AI MCP, JDA). Keep edits minimal so upstream merges stay easy |
-| `src/main/java/dev/saseq/whispcord/` | Fork additions: `check_member_permissions`, `get_bot_status`, `get_guild_snapshot` (JSON output), `scan_messages`, `set_live_watch_guilds`, `/mcp` shared-secret filter, guild join/leave webhook, live-watch message forwarder |
+| `src/main/java/dev/saseq/whispcord/` | Fork additions: `check_member_permissions`, `get_bot_status`, `get_guild_snapshot` (JSON output), `scan_messages`, `set_live_watch_guilds`, `/mcp` shared-secret filter, guild join/leave webhook, live-watch message forwarder, Discord chat (`DiscordChatListener`: @mentions + Approve/Cancel buttons; `post_chat_message`) |
 | `packages/shared` | Permission bitfields, tool allowlist and tiers, plan schema, snapshot types (TS source, no build step) |
-| `apps/orchestrator` | Node/TS API + agent: MCP client, **gateway** (guild lock + tool filter), planner (Claude), executor, undo, live watches (`live/watchService.ts`), Supabase store, CLI |
+| `apps/orchestrator` | Node/TS API + agent: MCP client, **gateway** (guild lock + tool filter), planner (Claude), executor, undo, live watches (`live/watchService.ts`), Discord chat (`chat/discordChat.ts`), Supabase store, CLI |
 | `apps/web` | Next.js 16 App Router + Tailwind 4 + Supabase Auth (Discord) |
 | `supabase/migrations` | Postgres schema + RLS |
 | `infra/` | docker-compose: discord-mcp + orchestrator on a private network |
@@ -42,10 +42,11 @@ Node 22.12+ (see `.nvmrc`; Supabase needs Node 22, and Tailwind/Fastify need `re
 5. **Human approval before any write.** Deletions need typed confirmation. Undo may delete only what Whispcord created. A live watch that auto-deletes is a *standing* approval: it is a destructive plan step (Deletions tier + typed confirmation when approved), deletes only high-severity matches, re-checks the creator's Manage Server + Manage Messages before each deletion, and is capped per hour.
 6. **Server content is untrusted data.** Channel and role names go to Claude quoted inside `<server_snapshot>`, never as instructions.
 7. **The bot token lives only in discord-mcp.** The MCP endpoint is never public.
-8. **Message text never reaches the planner.** Message search (`agent/messageFinder.ts`) and live watches (`live/watchService.ts`) send text (and, for live watches, image attachments) only to a classifier with no tools; the planner gets IDs, authors, severity and short reasons (and `list_live_watches` returns watch settings only). Keep it that way: members can write anything, including instructions.
+8. **Message text never reaches the planner.** Message search (`agent/messageFinder.ts`) and live watches (`live/watchService.ts`) send text (and, for live watches, image attachments) only to a classifier with no tools; the planner gets IDs, authors, severity and short reasons (and `list_live_watches` returns watch settings only). Keep it that way: members can write anything, including instructions. The one exception is Discord chat: the text of a message that @mentions the bot, written by someone with Manage Server, is that administrator's prompt (like the web prompt box). Only that message is forwarded, never the conversation around it or a message it replies to.
+10. **Discord chat stays narrow.** discord-mcp forwards a message only when it mentions the bot's user or its own managed role (never @everyone/@here) and the author has Manage Server; everyone else is ignored and their text never leaves Discord. Runs started from chat go through `RunService` like web runs (live permission check, tiers, limits). Only the requester can approve, cancel or answer, after a live Manage Server re-check, and a button only acts on runs of the server it was clicked in. Plans that delete need DELETE typed in a modal. `post_chat_message` is internal (not in `TOOL_SPECS`) and suppresses every ping except the reply to the requester.
 9. **Live watches forward only watched servers.** discord-mcp forwards new messages only for guilds in `LiveWatchRegistry`, set by the orchestrator to servers with an active watch, Live watch switched on, and status connected. Image attachments are fetched only from Discord's CDN (`live/images.ts`: https, allowlisted hosts, no redirects, 5 MB cap, type checked from the bytes) and never stored.
 
-Any change to these needs a matching test in `apps/orchestrator/test/gateway.test.ts` or `plan.test.ts` (live-watch flows are also covered in `liveWatch.test.ts`).
+Any change to these needs a matching test in `apps/orchestrator/test/gateway.test.ts` or `plan.test.ts` (live-watch flows are also covered in `liveWatch.test.ts`, Discord chat in `discordChat.test.ts`).
 
 ## Conventions
 

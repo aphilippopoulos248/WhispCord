@@ -134,4 +134,23 @@ export class WhispcordInternal {
   async snapshot(guildId: string): Promise<GuildSnapshot> {
     return GuildSnapshotSchema.parse(await this.json("get_guild_snapshot", { guildId }));
   }
+
+  /** Discord chat: posts Whispcord's reply. Pings nobody except the replied-to administrator. */
+  async postChatMessage(input: {
+    guildId: string;
+    channelId: string;
+    content: string;
+    replyToMessageId?: string | null;
+    buttons?: Array<{ action: "approve" | "confirm" | "cancel"; runId: string }>;
+  }): Promise<{ messageId: string }> {
+    const out = (await this.json("post_chat_message", {
+      guildId: input.guildId,
+      channelId: input.channelId,
+      content: input.content,
+      replyToMessageId: input.replyToMessageId ?? "",
+      buttons: (input.buttons ?? []).map((b) => `${b.action}:${b.runId}`).join(","),
+    })) as { messageId?: unknown };
+    if (typeof out.messageId !== "string") throw new Error("post_chat_message returned no messageId");
+    return { messageId: out.messageId };
+  }
 }

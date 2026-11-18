@@ -103,7 +103,18 @@ export class RunService {
     return () => this.busy.delete(guildId);
   }
 
-  async startRun(server: Server, profile: Profile, prompt: string, kind: Run["kind"] = "prompt", parentRunId: string | null = null): Promise<Run> {
+  /**
+   * `onCreated` runs after the run row exists but before planning starts, so callers (Discord
+   * chat) can subscribe to its events without missing any.
+   */
+  async startRun(
+    server: Server,
+    profile: Profile,
+    prompt: string,
+    kind: Run["kind"] = "prompt",
+    parentRunId: string | null = null,
+    onCreated?: (run: Run) => void,
+  ): Promise<Run> {
     if (!this.d.anthropic) throw new HttpError(503, "ANTHROPIC_API_KEY is not configured.");
     const trimmed = prompt.trim();
     if (!trimmed) throw new HttpError(400, "Prompt is empty.");
@@ -121,6 +132,7 @@ export class RunService {
       serverId: server.id, profileId: profile.id, kind, parentRunId, prompt: trimmed, model: this.d.config.WHISPCORD_PLANNER_MODEL,
     });
     await this.d.store.recordUsage(profile.id, { runs: 1 });
+    onCreated?.(run);
     void this.plan(run, server, profile, initialConversation(gateway, trimmed), gateway);
     return run;
   }

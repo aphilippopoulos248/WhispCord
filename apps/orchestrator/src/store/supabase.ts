@@ -147,6 +147,11 @@ export class SupabaseStore implements Store {
     return r ? toProfile(r) : null;
   }
 
+  async getProfileByDiscordUserId(discordUserId: string) {
+    const r = check(await this.db.from("profiles").select("*").eq("discord_user_id", discordUserId).maybeSingle());
+    return r ? toProfile(r) : null;
+  }
+
   async setManageableGuilds(profileId: string, guilds: Profile["manageableGuilds"]) {
     check(await this.db.from("profiles").update({ manageable_guilds: guilds, guilds_synced_at: new Date().toISOString() }).eq("id", profileId));
   }

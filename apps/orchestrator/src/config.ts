@@ -39,6 +39,9 @@ const EnvSchema = z.object({
   /** Live watch: most images checked per server per hour (images cost far more than text). */
   LIVE_WATCH_MAX_IMAGES_PER_HOUR: z.coerce.number().default(300),
 
+  /** Discord chat: server managers @mention the bot to start runs and approve plans. "false" = off. */
+  DISCORD_CHAT: z.string().default("true").transform((v) => v.trim().toLowerCase() !== "false"),
+
   SUPABASE_URL: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
 

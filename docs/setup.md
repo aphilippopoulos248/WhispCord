@@ -44,6 +44,18 @@ npm run cli -- --guild <serverId> --user <yourDiscordUserId> \
 
 The CLI prints the plan, asks for approval, runs the plan through the gateway, and lists the undo actions.
 
+### Talking to Whispcord in Discord
+
+Once a server is connected, anyone with **Manage Server** (owners and Administrators included) who has signed in to Whispcord once can mention the bot in any channel it can read and write:
+
+> @Whispcord add a #clips channel under Media and let only @Mods post in it
+
+Whispcord replies with its plan and **Approve** / **Cancel** buttons. Nothing changes until the person who asked presses Approve. For plans that delete things, the button asks them to type `DELETE`. If Whispcord needs more detail it asks a question, and the requester answers by replying to that message (keep the @ ping on, which is Discord's default for replies).
+
+- Only direct mentions count: `@Whispcord` or the bot's own role. `@everyone` and `@here` are ignored, and so are mentions from members without Manage Server.
+- To run only some steps of a plan, or to undo, open the server in the web app. Runs started from Discord appear there too.
+- Needs `WHISPCORD_EVENTS_WEBHOOK_URL` set on discord-mcp. It does **not** need the Message Content intent. Turn it off with `WHISPCORD_DISCORD_CHAT=false` (discord-mcp) or `DISCORD_CHAT=false` (orchestrator).
+
 ## 4. Deploy
 
 - **Everything on Railway** (below): three services from this repo. Or run the backend from `infra/docker-compose.yml` on Fly.io or a VPS and the web app anywhere that builds `apps/web/Dockerfile`.

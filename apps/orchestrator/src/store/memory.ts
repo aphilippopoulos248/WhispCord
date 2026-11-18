@@ -20,6 +20,9 @@ export class MemoryStore implements Store {
   async getProfileByAuthUser(authUserId: string) {
     return [...this.profiles.values()].find((p) => p.authUserId === authUserId) ?? null;
   }
+  async getProfileByDiscordUserId(discordUserId: string) {
+    return [...this.profiles.values()].find((p) => p.discordUserId === discordUserId) ?? null;
+  }
   async setManageableGuilds(profileId: string, guilds: Profile["manageableGuilds"]) {
     const p = this.profiles.get(profileId);
     if (p) p.manageableGuilds = guilds;

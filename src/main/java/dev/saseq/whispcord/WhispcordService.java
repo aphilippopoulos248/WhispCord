@@ -361,6 +361,68 @@ public class WhispcordService {
         return Json.write(out);
     }
 
+    /** Discord's message limit. */
+    static final int CHAT_MAX_CONTENT = 2000;
+    private static final java.util.regex.Pattern CHAT_BUTTON =
+            java.util.regex.Pattern.compile("^(approve|confirm|cancel):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
+
+    /**
+     * Posts Whispcord's own reply in a channel (Discord chat: plans, questions, results). Never
+     * pings anyone except, on a reply, the administrator who mentioned the bot, so text derived
+     * from server content can't mass-mention. Buttons are limited to Whispcord's approve, confirm
+     * and cancel actions on a run, handled by DiscordChatListener.
+     *
+     * Not in the orchestrator's TOOL_SPECS, so Claude can never call it.
+     */
+    @Tool(name = "post_chat_message",
+            description = "Whispcord internal: posts Whispcord's chat reply in a channel, optionally with run approval buttons")
+    public String postChatMessage(
+            @ToolParam(description = "Discord server ID") String guildId,
+            @ToolParam(description = "Channel or thread ID in that server") String channelId,
+            @ToolParam(description = "Message text (cut to 2000 characters)") String content,
+            @ToolParam(description = "Message to reply to, in the same channel", required = false) String replyToMessageId,
+            @ToolParam(description = "Comma-separated buttons as action:runId, action one of approve, confirm, cancel", required = false) String buttons) {
+        Guild guild = requireGuild(guildId);
+        GuildChannel channel = channelId == null ? null : guild.getGuildChannelById(channelId);
+        if (!(channel instanceof GuildMessageChannel target)) {
+            throw new IllegalArgumentException("Channel " + channelId + " is not a text channel in this server");
+        }
+        String text = content == null || content.isBlank() ? "(no message)" : content;
+        if (text.length() > CHAT_MAX_CONTENT) text = text.substring(0, CHAT_MAX_CONTENT - 1) + "…";
+
+        List<net.dv8tion.jda.api.components.buttons.Button> row = new ArrayList<>();
+        if (buttons != null && !buttons.isBlank()) {
+            for (String raw : buttons.split(",")) {
+                String spec = raw.trim();
+                if (spec.isEmpty()) continue;
+                if (!CHAT_BUTTON.matcher(spec).matches()) throw new IllegalArgumentException("Bad button: " + spec);
+                String action = spec.substring(0, spec.indexOf(':'));
+                String id = DiscordChatListener.PREFIX + spec;
+                row.add(switch (action) {
+                    case "approve" -> net.dv8tion.jda.api.components.buttons.Button.success(id, "Approve");
+                    case "confirm" -> net.dv8tion.jda.api.components.buttons.Button.danger(id, "Approve (type DELETE)");
+                    default -> net.dv8tion.jda.api.components.buttons.Button.secondary(id, "Cancel");
+                });
+            }
+        }
+
+        net.dv8tion.jda.api.utils.messages.MessageCreateBuilder builder = new net.dv8tion.jda.api.utils.messages.MessageCreateBuilder()
+                .setContent(text)
+                .setAllowedMentions(EnumSet.noneOf(Message.MentionType.class))
+                .mentionRepliedUser(true);
+        if (!row.isEmpty()) builder.setComponents(net.dv8tion.jda.api.components.actionrow.ActionRow.of(row));
+
+        var action = target.sendMessage(builder.build());
+        if (replyToMessageId != null && replyToMessageId.matches("\\d{17,20}")) {
+            action = action.setMessageReference(replyToMessageId).failOnInvalidReply(false);
+        }
+        Message sent = action.complete();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("messageId", sent.getId());
+        out.put("channelId", target.getId());
+        return Json.write(out);
+    }
+
     /**
      * Replaces the set of guilds whose new messages are forwarded for Whispcord live watches.
      * Only guilds the bot is in are kept. Returns whether Discord sends message text (the

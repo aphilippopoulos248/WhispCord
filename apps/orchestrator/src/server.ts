@@ -1,6 +1,7 @@
 import "./nodeVersion.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildApp, supabaseTokenVerifier } from "./app.js";
+import { DiscordChatService } from "./chat/discordChat.js";
 import { loadConfig } from "./config.js";
 import { Maintenance } from "./jobs.js";
 import { LiveWatchService } from "./live/watchService.js";
@@ -22,13 +23,19 @@ const events = new RunEvents();
 const anthropic = config.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: config.ANTHROPIC_API_KEY }) : null;
 const live = new LiveWatchService({ store, mcp, internal, anthropic, config, log: { info: (m) => app.log.info(m), warn: (m) => app.log.warn(m) } });
 
+const runs = new RunService({ store, mcp, internal, anthropic, events, config, live, log: (m, e) => app.log.error({ err: e }, m) });
+const chat = config.DISCORD_CHAT
+  ? new DiscordChatService({ store, runs, events, internal, config, log: { warn: (m) => app.log.warn(m) } })
+  : undefined;
+
 const app = await buildApp({
   config,
   store,
   internal,
   events,
   live,
-  runs: new RunService({ store, mcp, internal, anthropic, events, config, live, log: (m, e) => app.log.error({ err: e }, m) }),
+  runs,
+  chat,
   verifyToken: supabaseTokenVerifier(store.db),
 });
 

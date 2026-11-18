@@ -16,6 +16,7 @@ import {
 } from "@whispcord/shared";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
+import { InteractionSchema, MentionSchema, type DiscordChatService } from "./chat/discordChat.js";
 import type { Config } from "./config.js";
 import { fetchManageableGuilds } from "./discord.js";
 import { IncomingMessageSchema, type LiveWatchService } from "./live/watchService.js";
@@ -32,6 +33,8 @@ export interface AppDeps {
   events: RunEvents;
   /** Live moderation. Optional so tests and the CLI can run without it. */
   live?: LiveWatchService;
+  /** Discord chat (@mention the bot). Optional; off when DISCORD_CHAT=false. */
+  chat?: DiscordChatService;
   /** Resolves a Supabase access token to the auth user id. */
   verifyToken: (token: string) => Promise<string | null>;
 }
@@ -61,7 +64,7 @@ function safeEqual(a: string, b: string) {
 }
 
 export async function buildApp(deps: AppDeps) {
-  const { config, store, internal, runs, events, live } = deps;
+  const { config, store, internal, runs, events, live, chat } = deps;
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
   await app.register(cors, {
     origin: [config.WEB_ORIGIN],
@@ -418,6 +421,21 @@ export async function buildApp(deps: AppDeps) {
       // New message in a watched server. Message text is untrusted: it only goes to the classifier.
       const msg = IncomingMessageSchema.parse(req.body);
       return { ok: true, queued: live?.ingest(msg) ?? false };
+    }
+    if (type === "mention") {
+      // A server manager @mentioned the bot. Their message is their prompt; nothing else is sent.
+      const mention = MentionSchema.parse(req.body);
+      if (!chat) return { ok: true, handled: false };
+      void chat.handleMention(mention);
+      return { ok: true, handled: true };
+    }
+    if (type === "interaction") {
+      // Approve / Cancel pressed in Discord. The text is shown privately to whoever pressed it.
+      const interaction = InteractionSchema.parse(req.body);
+      const result = chat
+        ? await chat.handleInteraction(interaction)
+        : { text: "Discord chat is switched off on this Whispcord instance.", done: false };
+      return reply.header("x-whispcord-done", result.done ? "1" : "0").type("text/plain; charset=utf-8").send(result.text);
     }
     const body = GuildEventSchema.parse(req.body);
     if (body.type === "guild_leave") {

@@ -44,6 +44,7 @@ export const TOOL_DEFS: McpToolDef[] = [
   def("check_member_permissions", ["userId"], ["guildId", "userId"]),
   def("get_bot_status", [], ["guildId"]),
   def("get_guild_snapshot", [], ["guildId"]),
+  def("post_chat_message", ["channelId", "content", "replyToMessageId", "buttons"], ["guildId", "channelId", "content"]),
 ];
 
 export const SNAPSHOT: GuildSnapshot = {
@@ -94,6 +95,8 @@ export class FakeMcp implements DiscordMcp {
   /** Guilds discord-mcp was last told to forward messages for (set_live_watch_guilds). */
   liveWatchGuilds: string[] = [];
   down = false;
+  /** Discord chat replies posted with post_chat_message. */
+  chatPosts: Array<{ messageId: string; channelId: string; content: string; replyToMessageId: string; buttons: string }> = [];
   /** What scan_messages returns. */
   scanContentAvailable = true;
   scanMessages: Array<{ id: string; content: string; authorName?: string }> = [
@@ -132,6 +135,14 @@ export class FakeMcp implements DiscordMcp {
         }),
         isError: false,
       };
+    }
+    if (name === "post_chat_message") {
+      const messageId = (nextId++).toString();
+      this.chatPosts.push({
+        messageId, channelId: String(args.channelId), content: String(args.content),
+        replyToMessageId: String(args.replyToMessageId ?? ""), buttons: String(args.buttons ?? ""),
+      });
+      return { text: JSON.stringify({ messageId, channelId: args.channelId }), isError: false };
     }
     if (name === "get_guild_snapshot") return { text: JSON.stringify(SNAPSHOT), isError: false };
     if (name === "set_live_watch_guilds") {

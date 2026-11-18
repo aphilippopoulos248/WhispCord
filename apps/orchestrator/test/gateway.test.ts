@@ -77,6 +77,13 @@ describe("tool filter", () => {
     expect(names).not.toContain("send_private_message");
     expect(names).not.toContain("brand_new_upstream_tool");
     expect(names).not.toContain("get_guild_snapshot");
+    expect(names).not.toContain("post_chat_message");
+  });
+
+  it("never lets Claude post as Whispcord in Discord chat (post_chat_message is internal)", async () => {
+    const { gateway, mcp } = makeGateway({ enabledTiers: ["read", "build", "destructive", "moderate", "messaging"] });
+    expect(await code(gateway.call("post_chat_message", { channelId: GENERAL, content: "@everyone hi" }))).toBe("tool_blocked");
+    expect(mcp.chatPosts).toHaveLength(0);
   });
 
   it("only exposes read tools when asked", () => {

@@ -117,6 +117,8 @@ export interface NewWatch {
 
 export interface Store {
   getProfileByAuthUser(authUserId: string): Promise<Profile | null>;
+  /** For Discord chat: the Whispcord account linked to this Discord user, if they ever signed in. */
+  getProfileByDiscordUserId(discordUserId: string): Promise<Profile | null>;
   setManageableGuilds(profileId: string, guilds: ManageableGuild[]): Promise<void>;
 
   getServerByGuildId(guildId: string): Promise<Server | null>;
