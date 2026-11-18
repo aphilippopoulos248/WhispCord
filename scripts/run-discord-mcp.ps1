@@ -15,8 +15,17 @@ if (-not $env:DISCORD_TOKEN) { Write-Error "DISCORD_TOKEN is empty in .env"; exi
 
 $jar = Get-ChildItem (Join-Path $root "target") -Filter "discord-mcp-*.jar" -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -notlike "*.original" } | Select-Object -First 1
-if (-not $jar) {
-    Write-Host "Building discord-mcp..."
+
+# Rebuild when the jar is missing or older than any source file or pom.xml, so code changes are
+# never silently skipped. (Stop any running discord-mcp first: Windows locks the jar while it runs.)
+$stale = $null
+if ($jar) {
+    $sources = @(Get-ChildItem (Join-Path $root "src") -Recurse -File) + @(Get-Item (Join-Path $root "pom.xml"))
+    $stale = $sources | Where-Object { $_.LastWriteTime -gt $jar.LastWriteTime } | Select-Object -First 1
+}
+if (-not $jar -or $stale) {
+    if ($stale) { Write-Host "Rebuilding discord-mcp ($($stale.Name) changed since the last build)..." }
+    else { Write-Host "Building discord-mcp..." }
     Push-Location $root
     mvn -q package -DskipTests
     $code = $LASTEXITCODE
