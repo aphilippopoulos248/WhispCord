@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { siteOrigin } from "@/lib/siteOrigin";
 
 /**
  * Supabase OAuth callback. Supabase hands us the Discord access token only here, so we use it
@@ -8,10 +9,11 @@ import { createClient } from "@/lib/supabase/server";
  */
 export async function GET(request: NextRequest) {
   const url = request.nextUrl;
+  const origin = siteOrigin(request);
   const code = url.searchParams.get("code");
   const nextParam = url.searchParams.get("next") ?? "/servers";
   const next = nextParam.startsWith("/") && !nextParam.startsWith("//") ? nextParam : "/servers";
-  const fail = (msg: string) => NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(msg)}`, url.origin));
+  const fail = (msg: string) => NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(msg)}`, origin));
 
   if (!code) return fail("Discord sign-in was cancelled.");
   const supabase = await createClient();
@@ -32,5 +34,5 @@ export async function GET(request: NextRequest) {
       // Non-fatal: the server list just won't be pre-filled until the next sign-in.
     }
   }
-  return NextResponse.redirect(new URL(next, url.origin));
+  return NextResponse.redirect(new URL(next, origin));
 }

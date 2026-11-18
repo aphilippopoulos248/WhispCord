@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { siteOrigin } from "@/lib/siteOrigin";
 
 /** Refreshes the Supabase session cookie and guards signed-in pages. */
 export async function proxy(request: NextRequest) {
@@ -20,8 +21,7 @@ export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const needsAuth = path.startsWith("/servers") || path.startsWith("/connect");
   if (needsAuth && !data.user) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
+    const url = new URL("/login", siteOrigin(request));
     url.searchParams.set("next", path + request.nextUrl.search);
     return NextResponse.redirect(url);
   }
