@@ -1,430 +1,107 @@
 <div align="center">
-  <img src="assets/img/Discord_MCP_full_logo.svg" width="60%" alt="DeepSeek-V3" />
-</div>
-<hr>
-<div align="center" style="line-height: 1;">
-    <a href="https://github.com/modelcontextprotocol/servers" target="_blank" style="margin: 2px;">
-        <img alt="MCP Server" src="https://badge.mcpx.dev?type=server" style="display: inline-block; vertical-align: middle;"/>
-    </a>
-    <a href="https://discord.gg/5Uvxe5jteM" target="_blank" style="margin: 2px;">
-        <img alt="Discord" src="https://img.shields.io/discord/936242526120194108?color=7389D8&label&logo=discord&logoColor=ffffff" style="display: inline-block; vertical-align: middle;"/>
-    </a>
-    <a href="https://github.com/SaseQ/discord-mcp/blob/main/LICENSE" target="_blank" style="margin: 2px;">
-        <img alt="MIT License" src="https://img.shields.io/github/license/SaseQ/discord-mcp" style="display: inline-block; vertical-align: middle;"/>
-    </a>
+  <img src="assets/whispcord-icon.svg" width="120" alt="Whispcord" />
+  <h1>Whispcord</h1>
+  <p><strong>Manage your Discord server in plain English.</strong></p>
+  <a href="./LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
 </div>
 
+---
 
-## 📖 Description
+Whispcord is a web app for Discord server owners. You describe what you want ("set up a Gaming category with general, clips and LFG channels and a Squad voice channel"). A Claude agent turns that into a step-by-step plan, you approve it, and the Whispcord bot carries it out. Every run is saved to history, and anything Whispcord created can be undone.
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) server for the Discord API using [(JDA)](https://jda.wiki/),
-designed to integrate Discord bots with MCP-compatible applications such as Claude, ChatGPT etc. It allows AI assistants to interact with 
-Discord by managing channels, sending messages, and retrieving server information. Ideal for building powerful Discord automation and AI-driven workflows.
+## Features
 
+- **Plain-English changes.** Create and edit categories, channels, roles, permission overrides, emojis, events, invites and webhooks.
+- **Plan first, then run.** You see every action before anything changes. Nothing is written to your server until you approve it, and deletions need a typed confirmation.
+- **History and undo.** Each run is logged, and Whispcord can undo the things it created.
+- **Message search (opt-in).** Find messages that break your rules (spam, slurs, scams) and review them before acting.
+- **Live watch (opt-in).** Keep an eye on chosen channels as new messages (and images) arrive. It flags problems and can delete high-severity ones automatically, within an hourly limit.
+- **Permission tiers.** You choose what Whispcord may do on your server: Build, Deletions, Moderation, Messaging, Message search, Live watch. Only Build and Deletions are on by default.
 
-## 🔬 Installation
+## Using Whispcord
 
-### ► 🐳 Docker Installation (Recommended)
+1. **Sign in** with Discord.
+2. **Pick your server.** You need the **Manage Server** permission on it.
+3. **Add the bot.** Click **Add Whispcord to server**. Discord opens with your server and the right permissions already selected. Approve it, and the server shows as **Connected**.
+4. **Type a request**, for example:
+   - *"Create a Moderator role that can manage messages in #general and #clips."*
+   - *"Make an Events category with an announcements channel only admins can post in."*
+   - *"Rename #off-topic to #lounge and move it to the top."*
+5. **Review the plan.** Whispcord lists every action it will take. Click **Run** to apply it, or change your request.
+6. **Watch it run.** Actions execute live with a progress log.
+7. **Undo if needed.** Open the run in **History** and click **Undo** to remove what it created.
 
-> [!NOTE]
-> Docker installation is required. Full instructions can be found on [docker.com](https://www.docker.com/products/docker-desktop/).
+To use message search or live watch, switch on those tiers in the server's settings first. They send message text to Anthropic for classification, so they stay off until you turn them on.
 
-#### 1) Set local env variables
-```bash
-export DISCORD_TOKEN="YOUR_DISCORD_BOT_TOKEN"
-export DISCORD_GUILD_ID="OPTIONAL_DEFAULT_SERVER_ID"
-export SPRING_PROFILES_ACTIVE=http
+### What Whispcord won't do
+
+- Act on any server other than the one you're working in.
+- Give anyone permissions you don't have yourself, touch roles at or above your highest role, or grant Administrator.
+- Change anything without your approval.
+- Send DMs or look up users outside your server.
+- Treat message text, channel names or role names as instructions.
+
+## How it works
+
+```
+Browser (Next.js)  ──►  Orchestrator (Node/TS)  ──►  discord-mcp (Java, private)  ──►  Discord
+                         │  Claude planner
+                         │  Gateway: server lock + tool allowlist + permission checks
+                         └► Supabase (auth, servers, runs, history)
 ```
 
-> [!IMPORTANT]
-> Instructions for creating a Discord bot and retrieving its token can be found [here](https://discordjs.guide/legacy/preparations/app-setup).
+- **Web app** (`apps/web`): sign-in, server connection, prompt box, plan preview, history.
+- **Orchestrator** (`apps/orchestrator`): asks Claude for a plan, checks every step through the gateway, runs it, and records undo actions.
+- **discord-mcp** (`src/main/java`): a fork of [SaseQ/discord-mcp](https://github.com/SaseQ/discord-mcp) that holds the bot token and talks to Discord. It's never exposed publicly.
+- **Shared** (`packages/shared`): permission bitfields, the tool allowlist and tiers, and the plan schema.
 
-> [!TIP]
-> The `DISCORD_GUILD_ID` env variable is optional.
-> 
-> When provided, it sets a default Discord server ID so any tool that accepts a `guildId` parameter can omit it.
+## Running it yourself
 
-#### 2) Run the Docker container
-```bash
-docker run -d -i \
-  --name discord-mcp \
-  --restart unless-stopped \
-  -p 8085:8085 \
-  -e SPRING_PROFILES_ACTIVE \
-  -e DISCORD_TOKEN \
-  -e DISCORD_GUILD_ID \
-  saseq/discord-mcp:latest
-```
-
-Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🐋 Docker Compose Installation
-    </summary>
-
-#### 1) Clone the repository
-```bash
-git clone https://github.com/SaseQ/discord-mcp
-```
-
-#### 2) Go to the project directory
-```bash
-cd discord-mcp
-```
-
-#### 3) Create local runtime env
-```bash
-cat > .env <<EOF
-SPRING_PROFILES_ACTIVE=http
-DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>
-DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>
-EOF
-```
-
-#### 4) Start one shared MCP server container
-```bash
-docker compose up -d --build
-```
-
-#### 5) Verify
-```bash
-docker ps --filter name=discord-mcp
-curl -fsS http://localhost:8085/actuator/health
-```
-
-> [!TIP]
-> You do not need to set `LOGGING_PATTERN_CONSOLE` manually.
-> Logging is configured automatically for both `http` and legacy `stdio` modes.
-
-Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
-
-Health endpoint (Actuator): `http://localhost:8085/actuator/health`
-
-</details>
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🔧 Manual Installation
-    </summary>
-
-#### 1) Clone the repository
-```bash
-git clone https://github.com/SaseQ/discord-mcp
-```
-
-#### 2) Build the project
-
-> NOTE: Maven installation is required to use the mvn command. Full instructions can be found [here](https://www.baeldung.com/install-maven-on-windows-linux-mac).
+You need **Node.js 22.12+**, **Java 17+**, a Discord application with a bot, a Supabase project and an Anthropic API key. The full walkthrough is in [`docs/setup.md`](./docs/setup.md).
 
 ```bash
-cd discord-mcp
-mvn clean package # The jar file will be available in the /target directory
+npm install
+cp .env.example .env          # fill in the values
+
+# Terminal 1: discord-mcp
+powershell -ExecutionPolicy Bypass -File scripts/run-discord-mcp.ps1
+# Terminal 2: orchestrator (http://localhost:8787)
+npm run dev:orchestrator
+# Terminal 3: web app (http://localhost:3000)
+npm run dev:web
 ```
 
-#### 3) Configure AI client
-Run the JAR as a long-running server:
+### Quick test from the command line
+
+No database or web app needed. Add the bot to a test server, then:
 
 ```bash
-DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN> \
-DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID> \
-SPRING_PROFILES_ACTIVE=http \
-java -jar /absolute/path/to/discord-mcp-1.0.0.jar
+npm run cli -- --guild <serverId> --user <yourDiscordUserId> --dry-run \
+  "Create a Gaming category with general, clips and LFG text channels"
 ```
 
-> NOTE: The `DISCORD_GUILD_ID` environment variable is optional. When provided, it sets a default Discord server ID so any tool that accepts a `guildId` parameter can omit it.
+Drop `--dry-run` to approve and run the plan for real.
 
-Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
-
-</details>
-
-## 🔗 Connections
-
-### ► 🗞️ Default config.json Connection
-
-Recommended (HTTP singleton mode):
-```json
-{
-  "mcpServers": {
-    "discord-mcp": {
-      "url": "http://localhost:8085/mcp"
-    }
-  }
-}
-```
-
-Legacy mode (stdio, starts a new process/container per client session):
-```json
-{
-  "mcpServers": {
-    "discord-mcp": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "-e",
-        "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
-        "-e",
-        "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
-        "saseq/discord-mcp:latest"
-      ]
-    }
-  }
-}
-```
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        ⌨️ Claude Code Connection
-    </summary>
-
-Recommended (HTTP singleton mode):
-```bash
-claude mcp add discord-mcp --transport http http://localhost:8085/mcp
-```
-
-Legacy mode (stdio, starts a new process/container per client session):
-```bash
-claude mcp add discord-mcp -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN> -e DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID> saseq/discord-mcp:latest
-```
-
-</details>
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🤖 Codex CLI Connection
-    </summary>
+### Development
 
 ```bash
-codex mcp add discord-mcp --url http://localhost:8085/mcp
-codex mcp list
+npm test             # unit tests (shared + orchestrator)
+npm run typecheck
+mvn -q compile       # Java fork
 ```
 
-</details>
+### Deploying
 
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🦞 OpenClaw Connection
-    </summary>
+The repo includes configs for Railway (`railway/`) and Docker Compose (`infra/docker-compose.yml`). Only the web app and the orchestrator should be public; discord-mcp stays on a private network. See [Deploy in `docs/setup.md`](./docs/setup.md#4-deploy).
 
-Run this command:
-```bash
-openclaw mcp set discord-mcp '{"url":"http://localhost:8085/mcp","transport":"streamable-http"}'
-openclaw mcp list
-```
+## Privacy and Discord policies
 
-OR
+Whispcord sends server data only to Anthropic for inference and never uses it for training or evals. Message text never reaches the planning agent; only a separate classifier with no tools sees it. See [`docs/discord-policies.md`](./docs/discord-policies.md) for the full list of rules and the code that enforces each one.
 
-Pasting the following configuration into your OpenClaw `~/.openclaw/config.json` file:
-```json
-{
-  "mcp": {
-    "servers": {
-      "discord-mcp": {
-        "url": "http://localhost:8085/mcp",
-        "transport": "streamable-http"
-      }
-    }
-  }
-}
-```
+## Credits
 
-</details>
+Whispcord is built on [SaseQ/discord-mcp](https://github.com/SaseQ/discord-mcp), an MCP server for Discord built with [JDA](https://jda.wiki/), also MIT-licensed.
 
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🖲 Cursor Connection
-    </summary>
+## License
 
-Go to: `Settings` -> `Cursor Settings` -> `MCP` -> `Add new global MCP server`
-
-Pasting the following configuration into your Cursor `~/.cursor/mcp.json` file is the recommended approach. You may also install in a specific project by creating `.cursor/mcp.json` in your project folder. See [Cursor MCP docs](https://docs.cursor.com/context/model-context-protocol) for more info.
-```json
-{
-  "mcpServers": {
-    "discord-mcp": {
-      "url": "http://localhost:8085/mcp"
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🚀 n8n Connection
-    </summary>
-
-#### Connect in n8n
-1. Open n8n and add an **MCP Client** node.
-2. Choose **HTTP** or **Streamable HTTP** transport (depending on your n8n version/node options).
-3. Set the server URL to: `http://localhost:8085/mcp`
-4. Save the node and test the connection.
-5. After connecting, you can use the available Discord tools exposed by `discord-mcp` inside your workflow.
-
-#### Notes
-- If n8n is running in Docker, `localhost` may point to the n8n container itself, not your host machine.
-- In that case, use the Docker service name or another reachable host, for example: `http://discord-mcp:8085/mcp`
-
-</details>
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🖥 Claude Desktop Connection
-    </summary>
-
-
-
-STDIO local config (Default, legacy):
-> Past the following configuration into your Claude Desktop `claude_desktop_config.json` file.
-```json
-{
-  "mcpServers": {
-    "discord-mcp": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "-e",
-        "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
-        "-e",
-        "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
-        "saseq/discord-mcp:latest"
-      ]
-    }
-  }
-}
-```
-
-Remote MCP Connector:
-1. Open Claude Desktop and go to `Settings` -> `Connectors`.
-2. Add a custom connector and set MCP URL to your server endpoint (for example `https://<PUBLIC_HOST>/mcp`).
-3. Save and reconnect.
-
-> Claude Desktop remote connectors are managed via Connectors UI (not `claude_desktop_config.json`).
-> `http://localhost:8085/mcp` is reachable only from your machine. For Claude Desktop remote connectors, expose the endpoint with public HTTPS (for example tunnel/reverse proxy).
-
-</details>
-
-
-## 🛠️ Available Tools
-
-#### Server Information
-- [`get_server_info`](): Get detailed discord server information
-
-#### User Management
-- [`get_user_id_by_name`](): Get a Discord user's ID by username in a guild for ping usage `<@id>`
-- [`get_member_by_id`](): Get a Discord guild member by stable user ID, including username, global name, nickname, effective name, bot flag, join time, and roles
-- [`search_members`](): Search Discord guild members by ID, username, global name, nickname, or effective name and return identity candidates with stable user IDs
-- [`send_private_message`](): Send a private message to a specific user
-- [`edit_private_message`](): Edit a private message from a specific user
-- [`delete_private_message`](): Delete a private message from a specific user
-- [`read_private_messages`](): Read private message history from a specific user (includes author IDs, reply markers, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
-
-#### Message Management
-- [`send_message`](): Send a message to a specific channel
-- [`edit_message`](): Edit a message from a specific channel
-- [`delete_message`](): Delete a message from a specific channel
-- [`read_messages`](): Read message history from a specific channel (includes author IDs, reply markers, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
-- [`search_messages`](): Search the most recent messages of a channel or thread for text (case-insensitive scan of up to 1000 messages, newest first)
-- [`add_reaction`](): Add a reaction (emoji) to a specific message
-- [`remove_reaction`](): Remove a specified reaction (emoji) from a message
-- [`get_message`](): Get a single message by ID in the same format as `read_messages`; replies include the message they reply to
-- [`get_message_replies`](): Find replies to a message by scanning the messages posted after it (up to 1000)
-
-#### Channel Management
-- [`create_text_channel`](): Create a new text channel
-- [`edit_text_channel`](): Edit settings of a text channel (name, topic, nsfw, slowmode, category, position)
-- [`delete_channel`](): Delete a channel
-- [`find_channel`](): Find a channel type and ID using name and server ID
-- [`list_channels`](): List of all channels
-- [`get_channel_info`](): Get detailed information about a channel
-- [`move_channel`](): Move a channel to another category and/or change its position
-
-#### Category Management
-- [`create_category`](): Create a new category for channels
-- [`edit_category`](): Edit a category (rename or move position)
-- [`delete_category`](): Delete a category
-- [`find_category`](): Find a category ID using name and server ID
-- [`list_channels_in_category`](): List of channels in a specific category
-
-#### Webhook Management
-- [`create_webhook`](): Create a new webhook on a specific channel
-- [`delete_webhook`](): Delete a webhook
-- [`list_webhooks`](): List of webhooks on a specific channel
-- [`send_webhook_message`](): Send a message via webhook
-
-#### Role Management
-- [`list_roles`](): Get a list of all roles on the server with their details
-- [`create_role`](): Create a new role on the server
-- [`edit_role`](): Modify an existing role's settings
-- [`delete_role`](): Permanently delete a role from the server
-- [`assign_role`](): Assign a role to a user
-- [`remove_role`](): Remove a role from a user
-
-#### Moderation and User Management
-- [`kick_member`](): Kicks a member from the server
-- [`ban_member`](): Bans a user from the server
-- [`unban_member`](): Removes a ban from a user
-- [`timeout_member`](): Disables communication for a member for a specified duration
-- [`remove_timeout`](): Removes a timeout (unmute) from a member before it expires
-- [`set_nickname`](): Changes a member's nickname on the server
-- [`get_bans`](): Returns a list of banned users on the server with ban reasons
-
-#### Voice & Stage Channel Management
-- [`create_voice_channel`](): Create a new voice channel in a guild
-- [`create_stage_channel`](): Create a new stage channel for audio events
-- [`edit_voice_channel`](): Edit settings of a voice or stage channel (name, bitrate, user limit, region)
-- [`move_member`](): Move a member to another voice channel
-- [`disconnect_member`](): Disconnect a member from their current voice channel
-- [`modify_voice_state`](): Server mute or deafen a member in voice channels
-
-#### Scheduled Events Management
-- [`create_guild_scheduled_event`](): Schedule a new event on the server (voice, stage, or external)
-- [`edit_guild_scheduled_event`](): Modify event details or change its status (start, complete, cancel)
-- [`delete_guild_scheduled_event`](): Permanently delete a scheduled event
-- [`list_guild_scheduled_events`](): List all active and scheduled events on the server
-- [`get_guild_scheduled_event_users`](): Get list of users interested in a scheduled event
-
-#### Channel Permission Overwrites
-- [`list_channel_permission_overwrites`](): List all permission overwrites for a channel with role/member breakdown
-- [`upsert_role_channel_permissions`](): Create or update permission overwrite for a role on a channel
-- [`upsert_member_channel_permissions`](): Create or update permission overwrite for a member on a channel
-- [`delete_channel_permission_overwrite`](): Delete a permission overwrite for a role or member from a channel
-
-#### Invite Management
-- [`create_invite`](): Create a new invite link for a specific channel
-- [`list_invites`](): List all active invites on the server with their statistics
-- [`delete_invite`](): Delete (revoke) an invite so the link stops working
-- [`get_invite_details`](): Get details about a specific invite (works for any public invite)
-
-#### Thread Management
-- [`list_active_threads`](): List all active threads in the server
-- [`list_threads`](): List the threads of one channel (text, news, forum or media), including recent archived public threads; a returned thread ID works as `channelId` in the message tools (archived threads become usable there only after `list_threads` has been called on their parent channel)
-- [`get_thread_info`](): Get detailed information about a thread (parent channel, owner, archived/locked state, message and member counts; archived threads need `list_threads` on the parent channel first)
-
-#### Forum Management
-- [`create_forum_channel`](): Create a new forum channel
-- [`edit_forum_channel`](): Edit settings of a forum channel (name, topic, nsfw, slowmode, category, position, default sort, default layout)
-- [`list_forum_channels`](): List all forum channels in the server
-- [`get_forum_channel_info`](): Get detailed information about a forum channel including tags and settings
-- [`list_forum_tags`](): List all available tags in a forum channel
-- [`create_forum_post`](): Create a new forum post (thread) with an initial message in a forum channel
-- [`list_forum_posts`](): List active posts (threads) in a forum channel
-- [`modify_forum_post`](): Modify a forum post: lock/unlock, archive/unarchive, pin/unpin, or change applied tags
-
-#### Emoji Management
-- [`list_emojis`](): List all custom emojis on the server
-- [`get_emoji_details`](): Get detailed information about a specific custom emoji
-- [`create_emoji`](): Upload a new custom emoji to the server (base64 or image URL, max 256KB)
-- [`edit_emoji`](): Edit an existing emoji's name or role restrictions
-- [`delete_emoji`](): Permanently delete a custom emoji from the server
-
->If `DISCORD_GUILD_ID` is set, the `guildId` parameter becomes optional for all tools above.
-
-<hr>
-
-A more detailed examples can be found in the [Wiki](https://github.com/SaseQ/discord-mcp/wiki).
+Whispcord is released under the [MIT License](./LICENSE).
